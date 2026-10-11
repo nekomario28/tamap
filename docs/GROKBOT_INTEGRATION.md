@@ -151,7 +151,7 @@ flowchart LR
 **確認済み**
 - 【P0】Grok Bot のチャットで mermaid（classDef・linkStyle・style・破線/太線・`<br>`）が描画される。アニメーション GIF の添付が再生される。
 - 【開発VM】
-  - 全ツールの入出力（e2e 62 項目）。
+  - 全ツールの入出力（e2e 73 項目）。
   - 専門Botが作業中になると PM が自動で待機になること（P2）。
   - 差分の 1 行と `diff`（P3）。
   - `before` が保存されること（P4）。

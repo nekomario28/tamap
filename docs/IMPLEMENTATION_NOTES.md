@@ -57,7 +57,7 @@ README はチャット内完結の方式に書き換え済み（UX_DESIGN P7）�
 - `uv run python tests/e2e_mcp.py` → 60項目すべて PASS：上記に加え、`render_flow_gif`、`tamap_cli.sh`。
 - GIF（キャラクター化の前の版）：サンプル1周（10イベント）で 71フレーム・約25秒・約480KB。フレームを PNG で取り出して目視した（フォントは WenQuanYi Micro Hei）。Grok Bot の box でのフォントと添付は未確認。
 - P0（Grok Bot のチャットでの mermaid 描画と GIF の再生）は確認済みと報告を受けている（本作業では実施していない）。
-- キャラクター化（Yuu さんのフィードバック）：unittest 9件 OK、e2e 62項目 PASS。flow GIF（サンプル1周で約25秒・約650KB）とチーム紹介の GIF（5フレーム・約1.7秒・約70KB）を目視した。`docs/sample_output.md` の mermaid 11ブロックを headless Chrome＋mermaid v11 で描画してエラーなし（稼働図の絵文字・顔文字を含む）。
+- キャラクター化（Yuu さんのフィードバック）：unittest 9件 OK、e2e 73項目 PASS。flow GIF（サンプル1周で約25秒・約650KB）とチーム紹介の GIF（5フレーム・約1.7秒・約70KB）を目視した。`docs/sample_output.md` の mermaid 11ブロックを headless Chrome＋mermaid v11 で描画してエラーなし（稼働図の絵文字・顔文字を含む）。
 
 ## 未確認
 

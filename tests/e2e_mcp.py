@@ -204,6 +204,14 @@ async def main():
     p = subprocess.run([cli, "get_map"], input=json.dumps({"map_id": "nosuchmap"}), env=ENV,
                        capture_output=True, text=True, timeout=60)
     check(p.returncode == 1 and "エラー" in p.stdout, "tamap_cli.sh error -> exit 1")
+    p = subprocess.run([cli, "render_team_card", "{}"], env=ENV, capture_output=True, text=True, timeout=60)
+    check(p.returncode == 0 and p.stdout.startswith("▶ チーム紹介のGIF: ")
+          and Path(json.loads(p.stderr)["gif_path"]).exists(), "tamap_cli.sh render_team_card")
+    p = subprocess.run([cli, "main", "{}"], env=ENV, capture_output=True, text=True, timeout=60)
+    check(p.returncode != 0 and "unknown tool" in p.stderr, "tamap_cli.sh rejects non-tool names")
+    for t in tools:
+        p = subprocess.run([cli, t, "{}"], env=ENV, capture_output=True, text=True, timeout=60)
+        check("unknown tool" not in p.stderr, f"tamap_cli.sh accepts every MCP tool: {t}")
 
     out = ["# TaMap MCP 出力サンプル", "",
            "`tests/e2e_mcp.py` が stdio MCP サーバーを公式 mcp クライアントで実際に呼び、各ツールが返したチャット用テキスト（mermaid）をそのまま貼ったものです（自動生成）。時刻は実行時のもの。",
