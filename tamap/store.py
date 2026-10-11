@@ -286,7 +286,20 @@ BOT_KEYS = ("pm", "map_architect", "risk_analyst", "quality_reviewer")
 BOT_STATUSES = ("idle", "working", "done", "error")
 BOT_ALIASES = {"tamap_pm": "pm", "main": "pm", "architect": "map_architect", "risk": "risk_analyst",
                "quality": "quality_reviewer", "reviewer": "quality_reviewer"}
-BOT_HISTORY_LIMIT = 30
+BOT_HISTORY_LIMIT = 200  # several full cycles (one PM→MA→PM→RA→PM→QR→PM cycle is ~13 entries)
+
+
+def trim_history(hist: list[dict], limit: int = BOT_HISTORY_LIMIT) -> list[dict]:
+    """Keep at most `limit` entries, cutting only at a cycle boundary (right after a PM done/error) so the
+    oldest kept cycle is never missing its beginning. Falls back to a plain cut if no boundary exists."""
+    if len(hist) <= limit:
+        return hist
+    cut = len(hist) - limit
+    for i in range(cut, len(hist)):
+        prev = hist[i - 1]
+        if prev["bot"] == "pm" and prev["status"] in ("done", "error"):
+            return hist[i:]
+    return hist[cut:]
 SAY_LIMIT = 30
 
 
@@ -321,6 +334,6 @@ def set_bot_status(map_id: str, bot: str, status: str, note: str | None = None, 
             hist.append({"at": ts, "bot": "pm", "status": "idle", "note": wait, "auto": True})
         bots[key] = {"status": st, "note": note, "updated_at": ts, **({"say": say} if say else {})}
         hist.append({"at": ts, "bot": key, "status": st, "note": note, **({"say": say} if say else {})})
-        map_["bot_history"] = hist[-BOT_HISTORY_LIMIT:]
+        map_["bot_history"] = trim_history(hist)
         _write(map_)
     return map_

@@ -117,15 +117,24 @@ def _center(draw, xy, text, font, fill):
 
 
 def cycle_events(history: list[dict]) -> list[dict]:
-    """The last PM-intake → ... cycle: from the last `pm working` before the last specialist `working`."""
-    last_spec = max((i for i, h in enumerate(history) if h["bot"] != "pm" and h["status"] == "working"), default=None)
-    if last_spec is None:
-        return list(history)
-    first_spec = last_spec
-    while first_spec > 0 and not (history[first_spec - 1]["bot"] == "pm" and history[first_spec - 1]["status"] == "working"):
-        first_spec -= 1
-    start = max(first_spec - 1, 0)
-    return list(history[start:])
+    """The latest whole cycle, from the user's request to the PM's final answer.
+
+    A cycle ends with `pm done/error`. If the history ends with one, the cycle is the stretch after the
+    previous PM done/error; otherwise (still running) it is everything after the last PM done/error.
+    Leading entries before the cycle's first `pm working` (the intake) are skipped, so the GIF replays
+    PM → Map Architect → PM → Risk Analyst → PM → Quality Reviewer → PM in full.
+    """
+    if not history:
+        return []
+    ends = [i for i, h in enumerate(history) if h["bot"] == "pm" and h["status"] in ("done", "error")]
+    last = len(history) - 1
+    if ends and ends[-1] == last:
+        start = ends[-2] + 1 if len(ends) > 1 else 0
+    else:
+        start = ends[-1] + 1 if ends else 0
+    seg = history[start:]
+    intake = next((i for i, h in enumerate(seg) if h["bot"] == "pm" and h["status"] == "working"), 0)
+    return list(seg[intake:])
 
 
 def _layers(tasks: list[dict]) -> dict[str, int]:

@@ -49,6 +49,9 @@ def live_url(map_id: str) -> str:
     return f"{base_url()}/live/{map_id}" + (f"?token={quote(t)}" if t else "")
 
 
+LIVE_EVENTS = 40  # the page shows the last 8; extra ones only seed envelopes
+
+
 def _hex(c) -> str:
     return "#%02x%02x%02x" % tuple(c)
 
@@ -81,7 +84,7 @@ def snapshot(map_id: str) -> dict:
     qr = len((ana.get("quality") or {}).get("items") or [])
     bots = {k: {"status": "idle", **((m.get("bots") or {}).get(k) or {})} for k in store.BOT_KEYS}
     events = []
-    for h in (m.get("bot_history") or [])[-store.BOT_HISTORY_LIMIT:]:
+    for h in (m.get("bot_history") or [])[-LIVE_EVENTS:]:
         events.append({"at": h["at"], "time": hms(h["at"]), "bot": h["bot"], "status": h["status"],
                        "note": h.get("note"), "say": h.get("say"), "auto": bool(h.get("auto")),
                        "name": store.BOT_NAMES[h["bot"]], "status_ja": animate.BOT_STATUS_JA[h["status"]],

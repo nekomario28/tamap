@@ -122,6 +122,40 @@ class StoreTest(unittest.TestCase):
         with Image.open(card["path"]) as img:
             self.assertEqual((img.format, img.n_frames), ("GIF", card["frames"]))
 
+    def test_cycle_events_full_cycle(self):
+        from tamap import animate
+        mid = self.m["map_id"]
+        hub = [("pm", "working"), ("map_architect", "working"), ("map_architect", "done"), ("pm", "working"),
+               ("risk_analyst", "working"), ("risk_analyst", "done"), ("pm", "working"),
+               ("quality_reviewer", "working"), ("quality_reviewer", "done"), ("pm", "done")]
+        store.set_bot_status(mid, "map_architect", "done", "前回の名残")  # before the intake: skipped
+        for bot, st in hub:
+            m = store.set_bot_status(mid, bot, st)
+        ev = animate.cycle_events(m["bot_history"])
+        self.assertEqual((ev[0]["bot"], ev[0]["status"]), ("pm", "working"))
+        self.assertEqual((ev[-1]["bot"], ev[-1]["status"]), ("pm", "done"))
+        specialists = [(e["bot"], e["status"]) for e in ev if e["bot"] != "pm"]
+        self.assertEqual(specialists, [("map_architect", "working"), ("map_architect", "done"),
+                                       ("risk_analyst", "working"), ("risk_analyst", "done"),
+                                       ("quality_reviewer", "working"), ("quality_reviewer", "done")])
+        # A second cycle: only it is replayed; an in-progress cycle is replayed from its intake.
+        for bot, st in hub[:5]:
+            m = store.set_bot_status(mid, bot, st)
+        ev2 = animate.cycle_events(m["bot_history"])
+        self.assertEqual(ev2[0]["at"], m["bot_history"][len(m["bot_history"]) - len(ev2)]["at"])
+        self.assertEqual([(e["bot"], e["status"]) for e in ev2 if e["bot"] != "pm"],
+                         [("map_architect", "working"), ("map_architect", "done"), ("risk_analyst", "working")])
+
+    def test_history_trim_keeps_whole_cycles(self):
+        cyc = [{"bot": "pm", "status": "working"}, {"bot": "map_architect", "status": "working"},
+               {"bot": "map_architect", "status": "done"}, {"bot": "pm", "status": "done"}]
+        hist = cyc * 60  # 240 entries
+        out = store.trim_history(hist, 30)
+        self.assertLessEqual(len(out), 30)
+        self.assertEqual((out[0]["bot"], out[0]["status"]), ("pm", "working"))
+        self.assertEqual(len(out) % 4, 0)
+        self.assertEqual(store.trim_history(hist[:10], 30), hist[:10])
+
     def test_live_page_read_only_and_sse(self):
         import http.client
         import os
