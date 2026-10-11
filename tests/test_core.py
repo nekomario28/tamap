@@ -82,7 +82,8 @@ class StoreTest(unittest.TestCase):
         blocked = [dict(t, status="blocked") if t["id"] == "T4" else t for t in tasks]
         m = store.update_map(self.m["map_id"], 1, blocked)
         self.assertEqual(m["last_diff"]["text"],
-                         "変更点：T4 未着手→ブロック中 ／ ボトルネック：T3→T4 ／ 影響先：T4・T6・T7→T6・T7")
+                         "変更点：T4 未着手→ブロック中 ／ ボトルネック：T3→T4 ／ "
+                         "影響先：T4・T6・T7→T6・T7（T4はボトルネックに）")
         done = [dict(t, status="done") if t["id"] == "T3" else t for t in blocked]
         d = store.update_map(self.m["map_id"], 2, done)["last_diff"]
         self.assertEqual(d["text"], "変更点：T3 進行中→完了 ／ ボトルネック：変化なし（T4） ／ 影響先：変化なし（T6・T7）")
@@ -91,6 +92,141 @@ class StoreTest(unittest.TestCase):
         self.assertEqual((d["from_revision"], d["to_revision"]), (2, 3))
         d = store.update_map(self.m["map_id"], 3, analysis={"pm": "x"})["last_diff"]
         self.assertTrue(d["text"].startswith("変更点：分析のみ更新（タスク変化なし）"))
+
+    @staticmethod
+    def _tasks(spec):
+        return [{"id": i, "title": i, "status": s, "depends_on": d} for i, s, d in spec]
+
+    def test_diff_merge_point_with_done_upstream_is_not_a_tied_bottleneck(self):
+        tasks = self._tasks([("T1", "done", []), ("T2", "done", ["T1"]), ("T3", "todo", ["T1"]),
+                             ("T4", "todo", ["T3"]), ("T5", "todo", ["T2", "T4"]), ("T6", "todo", ["T5"])])
+        m = store.create_map("real run", tasks)
+        self.assertEqual(store.top_bottlenecks(m["graph"]), ["T3"])
+        done = [dict(t, status="done") if t["id"] == "T3" else t for t in tasks]
+        m = store.update_map(m["map_id"], 1, done)
+        # T5 waits only on T4 now (T2 is done), so it must not tie with T4; it stays a merge point.
+        self.assertEqual(store.top_bottlenecks(m["graph"]), ["T4"])
+        self.assertTrue(m["graph"]["metrics"]["T5"]["is_merge_point"])
+        self.assertEqual(m["last_diff"]["text"],
+                         "変更点：T3 未着手→完了 ／ ボトルネック：T3→T4（T3は完了） ／ "
+                         "影響先：T4・T5・T6→T5・T6（T4はボトルネックに）")
+        self.assertEqual(m["last_diff"]["impacted"]["dropped"], {"ボトルネックに": ["T4"]})
+
+    def test_diff_single_to_multiple_bottlenecks(self):
+        tasks = self._tasks([("T1", "todo", []), ("T2", "todo", ["T1"]), ("T3", "todo", ["T2"]),
+                             ("T4", "todo", ["T1"]), ("T5", "todo", ["T4"])])
+        m = store.create_map("split", tasks)
+        done = [dict(t, status="done") if t["id"] == "T1" else t for t in tasks]
+        d = store.update_map(m["map_id"], 1, done)["last_diff"]
+        self.assertEqual(d["bottleneck"]["after"], ["T2", "T4"])
+        # 影響先 covers what every bottleneck holds up, not just the first one.
+        self.assertEqual(d["impacted"]["after"], ["T3", "T5"])
+        self.assertEqual(d["text"],
+                         "変更点：T1 未着手→完了 ／ ボトルネック：T1→T2・T4（T1は完了） ／ "
+                         "影響先：T2・T3・T4・T5→T3・T5（T2・T4はボトルネックに）")
+
+    def test_impacted_includes_bottleneck_downstream_of_another(self):
+        tasks = core.process(self._tasks([("A", "todo", []), ("B", "todo", ["A"]), ("C", "todo", ["B"]),
+                                          ("D", "done", ["C"])]))["tasks"]
+        self.assertEqual(store.impacted_by(tasks, ["A", "B"]), ["B", "C"])
+
+    def test_diff_impact_dropped_reasons(self):
+        tasks = self._tasks([("T1", "todo", []), ("T2", "todo", ["T1"]), ("T3", "todo", ["T2"]),
+                             ("T4", "todo", [])])
+        m = store.create_map("reasons", tasks)
+        # T1 stays the bottleneck; T3 is dropped from the map and T2 no longer depends on T1.
+        tasks2 = self._tasks([("T1", "todo", []), ("T2", "todo", []), ("T4", "todo", ["T1"])])
+        d = store.update_map(m["map_id"], 1, tasks2)["last_diff"]
+        self.assertEqual(d["text"].split(" ／ ")[1:],
+                         ["ボトルネック：変化なし（T1）",
+                          "影響先：T2・T3→T4（T2はボトルネックの下流から外れた、T3は削除）"])
+
+    def test_noop_update_keeps_revision(self):
+        mid = self.m["map_id"]
+        path = store._path(mid)
+        before = path.read_bytes()
+        stored = json.loads(before)
+        incoming = []
+        for t in stored["tasks"]:
+            t = dict(t)
+            t["priority"] = 1  # dropped by normalization
+            t["title"] = f"  {t['title']}  "
+            if t["status"] == "done":
+                t["status"] = "完了"
+            if t["depends_on"]:
+                t["depends_on"] = "、".join(f" {d} " for d in t["depends_on"])
+            incoming.append(t)
+        m = store.update_map(mid, "1", incoming, analysis={"assumptions": []}, title="  t  ", source="same again")
+        self.assertTrue(m["unchanged"])
+        self.assertEqual(m["revision"], 1)
+        self.assertEqual(m["source"], "unknown")
+        self.assertEqual(m["updated_at"], stored["updated_at"])
+        self.assertEqual(len(m["history"]), 1)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertNotIn("unchanged", json.loads(path.read_text()))
+        # A real change still bumps, and a second identical call does not.
+        blocked = [dict(t, status="blocked") if t["id"] == "T4" else t for t in stored["tasks"]]
+        m = store.update_map(mid, 1, blocked, source="block T4")
+        self.assertFalse(m["unchanged"])
+        self.assertEqual(m["revision"], 2)
+        self.assertEqual(m["source"], "block T4")
+        again = store.update_map(mid, 2, blocked, source="block T4 again")
+        self.assertTrue(again["unchanged"])
+        self.assertEqual(again["revision"], 2)
+        self.assertEqual(store.read_map(mid)["source"], "block T4")
+        # Stale expected_revision is rejected even when the payload matches the current map.
+        with self.assertRaises(store.RevisionConflict):
+            store.update_map(mid, 1, blocked)
+        self.assertEqual(store.read_map(mid)["revision"], 2)
+        with self.assertRaises(store.StoreError):
+            store.update_map(mid, 2)
+
+    def test_noop_analysis_and_title_only_change(self):
+        mid = self.m["map_id"]
+        m = store.update_map(mid, 1, analysis={"pm": {"summary": "s", "actions": ["やる"]}})
+        self.assertEqual(m["revision"], 2)
+        m = store.update_map(mid, 2, analysis={"pm": {"summary": " s ", "actions": [{"text": "やる"}]}})
+        self.assertTrue(m["unchanged"])
+        self.assertEqual(m["revision"], 2)
+        m = store.update_map(mid, 2, title="新しい名前")
+        self.assertFalse(m["unchanged"])
+        self.assertEqual(m["revision"], 3)
+        self.assertIn("タイトルのみ更新", m["last_diff"]["text"])
+        reordered = list(reversed(store.read_map(mid)["tasks"]))
+        m = store.update_map(mid, 3, reordered)
+        self.assertFalse(m["unchanged"])
+        self.assertEqual(m["revision"], 4)
+
+    def test_say_embedded_in_note(self):
+        mid = self.m["map_id"]
+        m = store.set_bot_status(mid, "pm", "working", "受付 ｜ say:まかせてください！")
+        self.assertEqual(m["bots"]["pm"]["note"], "受付")
+        self.assertEqual(m["bots"]["pm"]["say"], "まかせてください！")
+        m = store.set_bot_status(mid, "map_architect", "working", "分解中 | say：線、つなぐっす。")
+        self.assertEqual(m["bots"]["map_architect"]["note"], "分解中")
+        self.assertEqual(m["bots"]["map_architect"]["say"], "線、つなぐっす。")
+        # Explicit say wins, and the embedded marker is still stripped from the factual note.
+        m = store.set_bot_status(mid, "pm", "done", "まとめた ｜ say:まちがい", say="まとまりました！")
+        self.assertEqual(m["bots"]["pm"]["note"], "まとめた")
+        self.assertEqual(m["bots"]["pm"]["say"], "まとまりました！")
+        m = store.set_bot_status(mid, "risk_analyst", "working",
+                                 '{"note": "T4を見ている", "say": "ここ、あやしいかも…",}')
+        self.assertEqual(m["bots"]["risk_analyst"]["note"], "T4を見ている")
+        self.assertEqual(m["bots"]["risk_analyst"]["say"], "ここ、あやしいかも…")
+        m = store.set_bot_status(mid, "quality_reviewer", "done",
+                                 '{"note":“検査した”,"say":“ちょっとだけ直すね”}')
+        self.assertEqual(m["bots"]["quality_reviewer"]["note"], "検査した")
+        self.assertEqual(m["bots"]["quality_reviewer"]["say"], "ちょっとだけ直すね")
+        m = store.set_bot_status(mid, "quality_reviewer", "working", '赤ペン {"say": "見るね"}')
+        self.assertEqual(m["bots"]["quality_reviewer"]["note"], "赤ペン")
+        self.assertEqual(m["bots"]["quality_reviewer"]["say"], "見るね")
+        m = store.set_bot_status(mid, "pm", "idle", "A | B の確認")
+        self.assertEqual(m["bots"]["pm"]["note"], "A | B の確認")
+        self.assertNotIn("say", m["bots"]["pm"])
+        long = "あ" * 40
+        m = store.set_bot_status(mid, "pm", "working", f"受付 ｜ say:{long}")
+        self.assertEqual(m["bots"]["pm"]["say"], "あ" * store.SAY_LIMIT)
+        self.assertEqual(m["bots"]["pm"]["note"], "受付")
 
     def test_quality_items_keep_before(self):
         a = store.normalize_analysis({"quality": {"items": [

@@ -126,8 +126,9 @@ async def main():
         async with ClientSession(r, w) as s:
             await s.initialize()
             tools = sorted(t.name for t in (await s.list_tools()).tools)
-            check(tools == ["create_map", "get_live_url", "get_map", "get_status", "list_maps", "render_flow_gif",
-                            "render_team_card", "set_bot_status", "simulate_delay", "update_map"], f"tools: {tools}")
+            check(tools == ["create_map", "get_live_url", "get_map", "get_status", "list_maps", "parse_handoff",
+                            "render_flow_gif", "render_team_card", "set_bot_status", "simulate_delay", "update_map"],
+                  f"tools: {tools}")
 
             analysis = {
                 "pm": {"summary": "T6がT4系列とT5系列の合流点。T3→T4→T6→T7が最長の未完了チェーン。",
@@ -157,9 +158,10 @@ async def main():
             tasks2 = [dict(t, status="blocked") if t["id"] == "T4" else dict(t) for t in sample["tasks"]]
             res, md, d = await call(s, "update_map", {"map_id": mid, "expected_revision": 1, "tasks": tasks2,
                                                       "source": "e2e test: T4 blocked"}, "update_map（T4をブロック中に）")
-            check(not res.isError and d["revision"] == 2, "update_map: rev2")
+            check(not res.isError and d["revision"] == 2 and d.get("unchanged") is False, "update_map: rev2")
             check('T4 API実装<br>ブロック中<br>▲ボトルネック"]' in md and "blocked" in md, "T4 blocked -> ボトルネック, orange")
-            diff_line = "変更点：T4 未着手→ブロック中 ／ ボトルネック：T3→T4 ／ 影響先：T4・T6・T7→T6・T7"
+            diff_line = ("変更点：T4 未着手→ブロック中 ／ ボトルネック：T3→T4 ／ "
+                         "影響先：T4・T6・T7→T6・T7（T4はボトルネックに）")
             check(md.startswith(diff_line + "\n\n```mermaid\ngraph LR"), f"diff line above the map: {md.splitlines()[0]}")
             check(md.rsplit("```", 1)[1].strip().startswith("revision 2 ・"), "revision line still last")
             check((d.get("diff") or {}).get("text") == diff_line and d["diff"]["bottleneck"]["changed"]
@@ -168,6 +170,16 @@ async def main():
             res, md, d = await call(s, "update_map", {"map_id": mid, "expected_revision": 1, "tasks": sample["tasks"],
                                                       "source": "stale writer"}, "update_map（古いrevisionで更新 → 拒否）")
             check(res.isError and d.get("code") == "revision_conflict" and d.get("current_revision") == 2, "stale update rejected")
+            res, md, d = await call(s, "update_map", {"map_id": mid, "expected_revision": 1, "tasks": tasks2})
+            check(res.isError and d.get("code") == "revision_conflict",
+                  "identical payload still enforces expected_revision")
+            res, md, d = await call(s, "update_map", {"map_id": mid, "expected_revision": 2, "tasks": tasks2,
+                                                      "title": sample["title"], "source": "e2e identical"},
+                                    "update_map（内容が同じ → revision据え置き）")
+            check(not res.isError and d["revision"] == 2 and d.get("unchanged") is True and d.get("diff") is None,
+                  "noop update keeps revision and has no diff")
+            check(md.startswith("変更なし（revision 2 のまま）") and "```mermaid" in md and "revision 2 ・" in md,
+                  f"noop note plus current map: {md.splitlines()[0]}")
 
             res, md, d = await call(s, "get_map", {"map_id": mid}, "get_map")
             check(not res.isError and d["revision"] == 2 and "revision 2 ・" in md, "get_map: rev2")
@@ -242,6 +254,23 @@ async def main():
                                "reason": "断定しすぎ"} and items[1]["before"] == "モックで並行開発する",
                   "quality items keep before/reason")
 
+            # Merge point whose other upstream is done (T5 <- T2 done, T4) must not tie with T4 as a bottleneck,
+            # and 影響先 must explain why it got shorter.
+            mt = [{"id": i, "title": i, "status": st, "depends_on": dep} for i, st, dep in
+                  [("T1", "done", []), ("T2", "done", ["T1"]), ("T3", "todo", ["T1"]), ("T4", "todo", ["T3"]),
+                   ("T5", "todo", ["T2", "T4"]), ("T6", "todo", ["T5"])]]
+            res, md, d = await call(s, "create_map", {"title": "合流点の片側が完了", "tasks": mt})
+            mid2 = d["map_id"]
+            res, md, d = await call(s, "update_map", {"map_id": mid2, "expected_revision": 1,
+                                                      "tasks": [dict(t, status="done") if t["id"] == "T3" else t
+                                                                for t in mt]},
+                                    "update_map（T3完了・ボトルネックがT4に移る）")
+            line = ("変更点：T3 未着手→完了 ／ ボトルネック：T3→T4（T3は完了） ／ "
+                    "影響先：T4・T5・T6→T5・T6（T4はボトルネックに）")
+            check(md.splitlines()[0] == line, f"merge-point diff line: {md.splitlines()[0]}")
+            check(md.count("▲ボトルネック") == 1 and 'T4<br>未着手<br>▲ボトルネック"]' in md,
+                  "only T4 labelled ボトルネック")
+
             res, md, d = await call(s, "render_flow_gif", {"map_id": mid}, "render_flow_gif")
             gif = Path(d.get("gif_path") or "/nonexistent")
             check(not res.isError and gif.name == f"{mid}_flow.gif" and gif.exists()
@@ -276,12 +305,39 @@ async def main():
             res, md, d = await call(s, "simulate_delay", {"map_id": mid, "task_id": "T99"})
             check(res.isError, "unknown task in simulate_delay -> error")
             res, md, d = await call(s, "list_maps", {}, "list_maps")
-            check(len(d["maps"]) == 3, "list_maps: 3 maps")
+            check(len(d["maps"]) == 4, "list_maps: 4 maps")
+
+            messy = (
+                "地図、できたっす！\n\n```json\n"
+                '{"title": "タスク管理", "tasks": [{"id": "T1", "title": "要件", "status": "done", "depends_on": [],},],'
+                ' "say": “地図、できたっす！”}\n```\n以上です。'
+            )
+            res, md, d = await call(s, "parse_handoff", {"text": messy, "role": "map_architect"},
+                                    "parse_handoff（前置き・末尾カンマ・スマートクォート）")
+            check(not res.isError and d.get("ok") is True and d["data"]["tasks"][0]["id"] == "T1"
+                  and d["data"]["say"] == "地図、できたっす！" and "tasks 1件" in md,
+                  "parse_handoff reads a fenced reply")
+            res, md, d = await call(s, "parse_handoff", {"text": "JSONがありません", "role": "quality_reviewer"})
+            check(res.isError and "JSON が見つかりません" in md and d.get("hint"), "parse_handoff explains a missing block")
+            res, md, d = await call(s, "set_bot_status", {"map_id": mid, "bot": "map_architect", "status": "working",
+                                                          "note": "線を確認 ｜ say:線、つなぐっす。"},
+                                    "set_bot_status（note に say を埋め込む）")
+            check(not res.isError and d["bots"]["map_architect"]["note"] == "線を確認"
+                  and d["bots"]["map_architect"]["say"] == "線、つなぐっす。",
+                  "say read from note when the say argument is absent")
+            check("「線、つなぐっす。」" in md, "embedded say shows in the status chart")
 
     live_checks(mid)
 
     # Shell fallback (scripts/tamap_cli.sh) calls the same tool functions against the same data dir.
     cli = str(ROOT / "scripts" / "tamap_cli.sh")
+    p = subprocess.run([cli, "set_bot_status", json.dumps(
+        {"map_id": mid, "bot": "quality_reviewer", "status": "done", "note": "指摘なし ｜ say:指摘なしだよ"})],
+                       cwd="/tmp", env=ENV, capture_output=True, text=True, timeout=60)
+    body = json.loads(p.stderr)
+    check(p.returncode == 0 and body["bots"]["quality_reviewer"]["say"] == "指摘なしだよ"
+          and body["bots"]["quality_reviewer"]["note"] == "指摘なし",
+          "tamap_cli.sh set_bot_status reads say from note")
     p = subprocess.run([cli, "simulate_delay", json.dumps({"map_id": mid, "task_id": "T4"})], cwd="/tmp", env=ENV,
                        capture_output=True, text=True, timeout=60)
     check(p.returncode == 0 and p.stdout.startswith("```mermaid") and "what-if: T4" in p.stdout
