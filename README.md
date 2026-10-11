@@ -2,11 +2,11 @@
 
 **タスクをつなぎ、未来を描く。**
 
-TaMap（タマップ）は、**GrokBotのAIチームがプロジェクトを理解・分析し、その結果を操作可能なタスクマップとして継続更新する**、会話型プロジェクト支援システムです。
+TaMap（タマップ）は、**Grok Bot の AI チームがプロジェクトのタスクと依存関係を分析し、その結果をチャットの中のタスクマップ（mermaid）として更新し続ける**、会話型のプロジェクト支援システムです。
 
-ユーザーは **GrokBot Main（TaMap PM）** に話しかけます。専門Botがタスク分解・依存関係・リスク・品質を分担し、**UI Bridge** を通じて同じURLの画面に結果を反映します。画面は分析の結果を確認・操作するためのもので、指示の入口はMainです。
+ユーザーが話しかけるのは **TaMap PM（Grok Bot のメインBot）だけ** です。PM が 3 体の専門Bot（Map Architect／Risk Analyst／Quality Reviewer）に分析を頼み、TaMap の MCP ツールが返す mermaid 図と GIF を、そのままチャットに貼ります。**Web UI・公開URL・外部の画面はありません**。入力から結果、追加の質問までがチャットの中で完結します。
 
-> **現在の状態：設計段階。** このREADMEは目標仕様と4時間ハッカソン向け実装計画です。Bot連携・MCP接続・UIの稼働や継続実行は、まだ検証済みではありません。
+> **現在の状態：ハッカソン MVP。** TaMap Core と stdio MCP サーバーは実装済みで、テストで動作を確認しています。Grok Bot の 4 体の連携は、指示文の案（[docs/GROKBOT_INTEGRATION.md](docs/GROKBOT_INTEGRATION.md)）までです。何を確認したかは下の「検証チェックリスト」を見てください。
 
 ## 名前の由来
 
@@ -22,91 +22,108 @@ TaMap（タマップ）は、**GrokBotのAIチームがプロジェクトを理�
 
 タスク一覧だけでは、何が終わらないと次に進めないか、遅延がどこに波及するか、今何を優先すべきかが分かりづらくなります。また、会話の中だけで分析すると、更新前後の状態やBotの判断根拠を追いづらくなります。
 
-TaMapは **会話による分析** と **継続更新される可視化・共有状態** を組み合わせて解決します。
+TaMap は **会話による分析** と、**同じ map_id で revision を上げていく共有状態** を組み合わせて、この課題を解決します。
 
 ## AIチーム構成
 
 | Bot | 役割 | 主な出力 |
 | --- | --- | --- |
-| **TaMap PM（GrokBot Main）** | ユーザーとの対話、専門Botへの依頼、結果の統合、UI更新指示 | 要約・優先アクション・画面URL |
+| **TaMap PM（Grok Bot のメインBot）** | ユーザーとの対話、専門Botへの依頼、結果の統合、MCPツールの呼び出し | 結論・タスクマップ・次の3アクション・ボタン |
 | **Map Architect** | タスク分解と依存関係の整理 | タスク・依存関係の構造化データ |
-| **Risk Analyst** | ボトルネックと遅延の波及を分析 | リスク・影響範囲・対処案 |
-| **Quality Reviewer** | タスクID・循環・矛盾・根拠を確認 | 検証結果・修正依頼 |
+| **Risk Analyst** | ボトルネックと遅延の波及を分析 | 影響の起点・対処案 |
+| **Quality Reviewer** | 根拠・断定しすぎ・矛盾を確認 | 「直す前→直した後」の指摘 |
 
-**TaMap PMはGrokBot Mainと同一の統括Bot** です。MainとPMを別のBotとして重複配置しません。GitHubで実際のコード変更・PRレビューをするBotは将来必要になった場合のみ追加し、上記の分析Botとは役割を区別します。
+TaMap PM はメインBotそのものです。メインBotとPMを別々のBotとして置くことはしません。
 
 ## 主な機能
 
-1. **Task Mapping** — タスクを分解し、依存関係と進捗をグラフで表示する。
-2. **Bottleneck Analysis** — 後続タスクへの影響や進行上の障害を特定する。
-3. **What-if Simulation** — 「このタスクが遅れたら？」の影響先を追跡する。
-4. **Action Planning** — 次に取るべき行動を根拠付きで最大3件提案する。
-5. **Quality Check** — 不明なタスク参照、重複ID、循環、分析の矛盾を検査する。
-6. **Live View** — Mainからの指示や再分析の結果で、**同じURLのUI** を更新する。
+1. **Task Mapping**：タスクと依存関係を mermaid のタスクマップで表示する（状態の色、合流点、ボトルネック、クリティカルパス候補）。
+2. **Bottleneck Analysis**：後続タスクへの影響が大きいタスクを、コードで計算する。
+3. **What-if Simulation**：「T4 が遅れたら？」に対して、到達できる後続タスクを黄色で示す（保存はしない）。
+4. **Action Planning**：PM が次の行動を最大 3 件提案する（ツール側でも 4 件以上は受け付けない）。
+5. **Quality Check**：重複ID、存在しない参照、自己依存、循環、不正な状態をコードで検出し、図の中で赤く示す。Quality Reviewer の指摘は「直す前→直した後」の形で保存する。
+6. **revision と差分**：更新は同じ `map_id` の `revision` を 1 つ上げる。古い revision からの更新は拒否する。更新すると、変更点・ボトルネック・影響先の差分が 1 行で返る。
+7. **流れのGIF**：Bot の状態の履歴（`bot_history`）から、PM→Map Architect→Risk Analyst→Quality Reviewer→PM の 1 周を GIF にする。
 
-所要時間など入力されていない数値を事実として断定しません。仮定・推定・未確認事項は明示します。
+入力されていない数値（所要日数など）は計算しません。推定と未確認の事項は、そう分かるように書きます。
 
 ## アーキテクチャ
 
 ```text
 ユーザー
-   │ 会話・追加指示
+   │ チャット（Markdown / mermaid / GIF / 質問ボタン）
    ▼
-GrokBot Main = TaMap PM
-   ├── Map Architect    ─┐
-   ├── Risk Analyst      ├── 分析結果・根拠
-   └── Quality Reviewer ─┘
-   │
+TaMap PM（Grok Bot のメインBot）
+   ├── 🗺️ Map Architect   ─┐
+   ├── ⚠️ Risk Analyst      ├── 分析結果（teammate メッセージ）
+   └── ✅ Quality Reviewer ─┘
+   │ MCP ツール呼び出し（stdio）
    ▼
-TaMap Core（タスクグラフ / 依存関係 / 影響計算 / 検証）
-   │ 構造化データ
-   ▼
-UI Bridge（MCPツール + 共有状態 + Web UI）
-   └── 固定URL /view/{view_id}
-          └── タスクグラフ・状態・分析結果
+TaMap MCP サーバー（tamap/mcp_server.py, FastMCP）
+   ├── TaMap Core（tamap/core.py）  検証・影響計算・ボトルネック（LLM 不使用）
+   ├── 共有ストア（tamap/store.py） data/maps/{map_id}.json（revision・履歴・Bot状態）
+   ├── mermaid 生成（tamap/render.py）
+   └── GIF 生成（tamap/animate.py） out/{map_id}_flow.gif
 ```
 
 ### 設計原則
 
-- **Mainが操作の入口**：ユーザーはMainに指示し、MainがBotの結果を統合してUI Bridgeに登録する。
-- **UIはデータから描画**：Botが毎回HTMLやJavaScriptを生成するのではなく、検証済みの構造化データを既定のコンポーネントで描画する。
-- **決定的な検証はコード側**：ID参照、循環検出、到達可能な後続タスクの計算などはプログラムで処理する。LLMの説明は検証結果を上書きしない。
-- **状態の正本を明示**：TaMap内のタスクマップ・分析・画面状態はUI Bridgeの共有ストアを正本とする。将来GitHubから同期するIssue/PRの原本はGitHub側とし、TaMapのコピーを原本と誤認しない。
-- **更新は追跡可能に**：同じ`view_id`を使い、`revision`と更新時刻、情報源を保持する。古い更新で新しい状態を上書きしない。
-- **操作権限は分離**：表示用URLに編集権限を付与しない。更新用MCP操作は認証し、GitHubの書き込み・PRマージ等は明示的な権限と承認を要する。
-- **継続作業と開発作業は別**：TaMapを開発する手順と、完成したTaMap上でGrokBotチームが分析・再評価を継続する動作は混同しない。
+- **入口は PM だけ**：ユーザーは PM に話しかけ、PM が専門Botの結果をまとめてツールに登録する。
+- **チャットの中で完結**：ツールは、チャットに貼る mermaid ブロックをそのまま返す。Web UI や公開URL は使わない。
+- **決定的な検証はコード側**：ID の参照、循環の検出、到達できる後続タスクの計算などはプログラムで行う。LLM の説明で検証結果を上書きしない。
+- **状態の正本は共有ストア**：`data/maps/{map_id}.json` が正本。同じ `map_id` を使い、`revision`・更新時刻・情報源（source）を残す。古い revision での上書きは拒否する。
+- **送信済みメッセージは書き換えられない**：途中の状態は `set_bot_status` で記録だけしておき、最後に GIF 1 本で見せる（[docs/UX_DESIGN.md](docs/UX_DESIGN.md)）。
 
-### UI Bridgeの最小契約（設計案）
+## MCP ツール
 
-| 操作 | 目的 |
-| --- | --- |
-| `create_view` | 新しいプロジェクトの画面と`view_id`を作成し、URLを返す |
-| `update_view` | 既存の`view_id`のタスク・依存関係・分析結果を更新する |
-| `get_view` | 現在の状態、revision、画面URLを取得する |
+| ツール | 内容 | revision |
+| --- | --- | --- |
+| `create_map(title, tasks, analysis?, source?)` | 新規作成。検証エラーがあっても保存し、図の中で赤く示す | 1 |
+| `update_map(map_id, expected_revision, tasks?, analysis?, source?, title?)` | tasks / analysis は全体を置き換える。差分の 1 行と `diff` を返す。古い revision は `revision_conflict` で拒否 | +1 |
+| `get_map(map_id)` | 現在の図。structuredContent に tasks と analysis | 変わらない |
+| `simulate_delay(map_id, task_id)` | What-if。遅延元を太枠、影響を受けるタスクとエッジを黄色で示す。保存しない | 変わらない |
+| `list_maps()` | map_id の一覧 | - |
+| `set_bot_status(map_id, bot, status, note?)` | Bot の状態を記録する。専門Botが `working` になると、PM は自動で `idle`（「〜の結果待ち」）になる | 変わらない |
+| `get_status(map_id)` | Bot の稼働図（mermaid）と直近の履歴 | 変わらない |
+| `render_flow_gif(map_id)` | 直近 1 周の流れを `out/{map_id}_flow.gif` に書き出し、そのパスを返す | 変わらない |
 
-`update_view`は想定するrevisionを受け取り、競合時は拒否または再読込して調整します。データには少なくともタスクID・タイトル・状態・依存先ID、分析結果、更新元、revisionを保持します。UIの編集操作を直接外部システムへ書き込むことは初期MVPの対象外です。
+`update_map` が返すチャット用テキストの例：
 
-MCP接続・外部URLの公開は **GrokBot環境で実際に接続できることが確認できてから** 実装方式を確定します。チャット内への独自UI埋め込みを前提にせず、Mainが通常のブラウザで開けるURLを返す方式から始めます。
+````text
+変更点：T3 進行中→完了 ／ ボトルネック：変化なし（T4） ／ 影響先：変化なし（T6・T7）
 
-### GitHubとの関係
+```mermaid
+graph LR …
+```
+revision 3 ・ map_id `JbeSRnxW` ・ 更新 13:58:10 JST ・ 検証OK
+````
 
-GitHub Issue/PRは**将来のデータソース兼作業対象**です。最初の4時間では必須にしません。後からIssue/PRをタスクとして取り込み、担当Botや進捗・レビュー状況をマップへ反映できる構成を目指します。
+各ツールが実際に返したテキストは [docs/sample_output.md](docs/sample_output.md) にあります（e2e テストで自動生成）。
 
-分析担当Botと、Issueに着手してコードを書きPRを作る実行担当Botは別の責務です。実行自動化には重複着手の防止、権限、CI、レビュー、マージ承認が必要です。
+## セットアップ
 
-## 使用イメージ（計画中）
+```bash
+uv sync                       # .venv を作る（mcp, pillow）
+scripts/mcp_server.sh         # stdio MCP サーバー（Grok Bot に登録するコマンド）
+```
 
-1. GrokBot上でTaMap PMと3つの専門Botを設定する。
-2. Mainにプロジェクト概要・タスク状況を送る。
-3. Mainが専門Botに分析を依頼し、Quality Reviewerの指摘を反映する。
-4. MainがUI Bridgeへ検証済みデータを登録し、`/view/{view_id}`のURLを返す。
-5. ユーザーが「T4が遅れたら？」などとMainへ追加質問する。
-6. Mainが影響を再分析して同じ画面を更新する。
-7. 継続実行が可能な環境では、Routine等で再評価を行う。ただし実行間隔・権限・起動条件は実環境で検証する。
+- データの置き場所：`data/maps/`（`TAMAP_DATA_DIR` で変更可）。GIF の出力先：`out/`（`TAMAP_OUT_DIR` で変更可）。
+- GIF の日本語は、Noto Sans CJK・IPA・WenQuanYi などのフォントを自動で探して使います。見つからないときは `TAMAP_FONT` にフォントファイルのパスを指定してください。
+- Grok Bot への組み込み方（MCP 登録、専門Botの役割分担、指示文の案）は [docs/GROKBOT_INTEGRATION.md](docs/GROKBOT_INTEGRATION.md) を見てください。
+
+## 使用イメージ
+
+1. ユーザーが PM にタスクの一覧を送る（または［サンプル（タスク管理アプリ T1〜T7）で試す］を押す）。
+2. PM が開始の 1 行を投稿し、Map Architect → Risk Analyst → Quality Reviewer の順に依頼する。そのたびに `set_bot_status` で記録する。
+3. PM が `create_map`／`update_map` を呼び、結果を 1 通で投稿する：結論、タスクマップ（mermaid と revision の行）、次の 3 アクション、レビューで直した点、推定・未確認、GIF、質問ボタン。
+4. ユーザーが［T4が遅れたら？］を押すと、PM が `simulate_delay` を 1 回呼んで黄色の影響図を返す（revision は変わらない）。
+5. ユーザーが［T3を完了にする］を押すと、PM が `update_map` を呼び、同じ `map_id` の revision が上がる。差分の 1 行が付く。
+
+詳しいメッセージの文面とデモの台本は [docs/UX_DESIGN.md](docs/UX_DESIGN.md) にあります。
 
 ### 入力例
 
-**プロジェクト：タスク管理アプリ開発**
+**プロジェクト：タスク管理アプリ開発**（`samples/readme_example.json`）
 
 - T1 要件整理：完了、依存なし
 - T2 UI設計：完了、T1に依存
@@ -118,47 +135,35 @@ GitHub Issue/PRは**将来のデータソース兼作業対象**です。最初�
 
 **質問：** 依存関係とボトルネックを整理し、T4が遅延した場合の影響範囲と、次に取るべき3つのアクションを教えてください。
 
-### 出力イメージ
+この入力に対する TaMap Core の計算結果（テストで確認済み）：合流点は T6、T4 が遅れると影響するのは T6・T7、クリティカルパス候補は T1→T3→T4→T6→T7、ボトルネック候補は T3。わざと不整合を入れたサンプル（`samples/broken_example.json`）では、重複ID・存在しない参照（T9）・T6⇄T7 の循環を検出します。
 
-- **依存関係：** T3 → T4 → T6 → T7
-- **遅延影響：** T4の遅延はT6・T7に波及する可能性があります。
-- **優先アクション：**
-  1. T3（DB設計）を完了させる。
-  2. T4（API実装）の着手条件を確認する。
-  3. T6（統合テスト）の準備を先行する。
+## テスト
 
-これは想定例であり、Botの実測結果ではありません。
+```bash
+uv run python -m unittest tests.test_core   # Core・ストア（自動待機・差分・before）・GIF
+uv run python tests/e2e_mcp.py              # stdio MCP サーバーを公式クライアントで起動し、全ツールを呼ぶ
+```
 
-## 4時間ハッカソン向けMVP
+## 検証チェックリスト
 
-**ゴール：Mainへの指示 → 専門Botによる分析 → 操作可能なグラフUI表示 → 追加指示で同じUI更新** を実演する。汎用UI生成基盤、GitHub自動コーディング、任意アプリへの連携は今回は作らない。
+チェックを付けたのは、テストを実際に実行して確認した項目だけです。
 
-| 時間 | 作業 | 完了条件 |
-| --- | --- | --- |
-| 0:00–0:30 | GrokBot Main → カスタムMCPの疎通試験 | ツールが呼び出せることを確認。不可なら共有ファイル経由の更新に切替 |
-| 0:30–1:40 | タスクグラフとWeb UI | サンプルのタスク・依存関係を表示できる |
-| 1:40–2:40 | UI Bridgeと共有状態 | `create_view` / `update_view` / `get_view`相当の入出力が動く |
-| 2:40–3:30 | 4 Bot連携・再分析 | Main経由の追加指示で同一画面が更新される |
-| 3:30–4:00 | テスト・発表準備 | 90秒以内の再現可能なデモ |
-
-### 検証チェックリスト
-
-- [ ] Mainと3専門Botが役割に沿って結果を引き継ぐ
-- [ ] タスクIDの不整合・存在しない参照・循環が検出される
-- [ ] 遅延したタスクから到達可能な後続タスクが正しく計算される
-- [ ] Quality Reviewerの指摘が最終回答と画面へ反映される
-- [ ] Mainから画面URLを取得できる
-- [ ] 追加指示で**同じview_id / URL** のrevisionと表示が更新される
-- [ ] 認証なしで状態を書き換えられない
-- [ ] 90秒以内に一連の流れを実演できる
+- [ ] PM と 3 体の専門Botが、役割に沿って結果を引き継ぐ（Grok Bot 上では未確認。指示文の案は docs/GROKBOT_INTEGRATION.md）
+- [x] タスクIDの不整合・存在しない参照・循環が検出される（unittest・e2e）
+- [x] 遅延したタスクから到達できる後続タスクが正しく計算される（unittest・e2e）
+- [x] Quality Reviewer の指摘が「直す前→直した後」の形でマップに保存される（e2e）
+- [ ] Quality Reviewer の指摘が PM の最終回答に反映される（Grok Bot 上では未確認）
+- [x] MCP ツールの戻り値から map_id と最新の図（mermaid）を取得できる（e2e。Grok Bot から MCP として呼べるかは未確認）
+- [x] 追加の更新で、**同じ map_id** の revision と図が更新され、差分の 1 行が付く。古い revision からの更新は拒否される（e2e）
+- [x] Bot の状態を記録すると、作業中のBotだけが光る（専門Botが作業中なら PM は待機）。その流れを GIF に書き出せる（unittest・e2e。GIF は開発用 VM で生成して目視）
+- [ ] 書き込みの認証：stdio MCP サーバーを起動できる人（＝ box にアクセスできる人）だけが書ける、という境界しかない。トークンによる認証は無い
+- [ ] 90 秒以内に一連の流れを実演できる（未リハーサル）
 
 ## 開発方針と非目標
 
-既存のTaMapのタスク分析・リスク分析・品質確認という思想を維持し、**その結果を継続して閲覧・更新できる薄いUI Bridge** を加えます。4時間では既定のグラフUIを確実に動かすことを優先します。
+この MVP では、**Web UI、公開URL、GitHub 連携、Issue/PR の自動割り当て・実装・マージ、日数の計算、常時無停止の自律実行、外部 DB の本格運用** は扱いません。必要になったら後から追加します。
 
-このMVPでは **GitHub連携、Issue/PRの自動割当・実装・マージ、任意UIのコード生成、常時無停止の自律実行、外部DBの本格運用** は保証しません。必要なら後から追加します。
-
-実装と検証が完了した機能だけを「動作済み」として記載し、できなかったものは明確に未完了とします。
+実装と検証が終わった機能だけを「動作済み」と書き、終わっていないものは未完了と明記します。
 
 ---
 
