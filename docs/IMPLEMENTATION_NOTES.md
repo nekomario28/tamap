@@ -26,7 +26,8 @@ README はチャット内完結の方式に書き換え済み（UX_DESIGN P7）�
 | `tamap/live.py` / `scripts/live_view.sh` | 閲覧専用のライブページ（標準ライブラリの http.server＋SSE）。ストアのファイルを監視し、`bot_history` に合わせてドット絵のキャラを canvas に描く（スプライトと配置は GIF と共通） |
 | `scripts/tamap_cli.sh` | MCP を登録できない場合のシェル用の代替。同じツール関数を呼ぶ（stdout=チャット用テキスト、stderr=structuredContent） |
 | `samples/readme_example.json` / `samples/broken_example.json` | README例 T1〜T7 ／ わざと不整合（T5→存在しないT9、T6⇄T7 循環、T2 重複ID） |
-| `tests/test_core.py` / `tests/e2e_mcp.py` | Core の unittest ／ 公式 mcp クライアントで stdio サーバーを起動し全ツールを呼ぶE2E（結果を `docs/sample_output.md` に保存） |
+| `tests/test_core.py` / `tests/e2e_mcp.py` | Core・ストア・GIF・ライブページの unittest ／ 公式 mcp クライアントで stdio サーバーを起動し全ツール・`tamap_cli.sh`・`live_view.sh` を確かめるE2E（結果を `docs/sample_output.md` に保存） |
+| `tests/live_browser.js` | 任意。ライブページを headless Chrome（puppeteer-core）で開き、状態を変えながらスクリーンショットを撮り、canvas のドットを `bot_pixels` と比べる |
 | `docs/sample_output.md` | 各ツールが実際に返したチャット用テキスト |
 
 ## MCPツール
@@ -38,7 +39,7 @@ README はチャット内完結の方式に書き換え済み（UX_DESIGN P7）�
 | `get_map(map_id)` | 現在の図。structuredContent に tasks と analysis | 不変 |
 | `simulate_delay(map_id, task_id)` | what-if。遅延元を太枠、影響タスクとそのエッジを黄色。保存しない | 不変 |
 | `list_maps()` | map_id 一覧（短い箇条書き） | - |
-| `set_bot_status(map_id, bot, status, note?)` | bot: pm / map_architect / risk_analyst / quality_reviewer、status: idle / working / done / error。稼働図を返す。専門Botが working になると pm を自動で idle（「〜の結果待ち」）にし、履歴にも残す | 不変 |
+| `set_bot_status(map_id, bot, status, note?, say?)` | bot: pm / map_architect / risk_analyst / quality_reviewer、status: idle / working / done / error。稼働図を返す。専門Botが working になると pm を自動で idle（「〜の結果待ち」）にし、履歴にも残す。`say` はふきだしの一言（30文字まで） | 不変 |
 | `render_flow_gif(map_id)` | 直近1周の流れを GIF に書き出し、パスを返す（キャラのふきだしは `set_bot_status` の `say`、無ければ口ぐせ） | 不変 |
 | `render_team_card()` | 4 体のチーム紹介の GIF（`out/tamap_team.gif`） | - |
 | `get_live_url(map_id)` | ライブページの URL と、ライブページのサーバーが起動しているか（`running`） | 不変 |

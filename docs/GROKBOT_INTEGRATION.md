@@ -1,6 +1,6 @@
 # TaMap × Grok Bot 統合案
 
-対象：TaMap（stdio MCP サーバー `tamap/mcp_server.py`）を、Grok Bot の 4 体（TaMap PM＋3 体の専門Bot）にどう組み込むか。UX は [UX_DESIGN.md](UX_DESIGN.md) のとおりとし、ここでは「どの仕組みでつなぐか」と「各Botの指示文」を決める。Web UI・HTTP サーバー・公開URL は使わない。
+対象：TaMap（stdio MCP サーバー `tamap/mcp_server.py`）を、Grok Bot の 4 体（TaMap PM＋3 体の専門Bot）にどう組み込むか。UX は [UX_DESIGN.md](UX_DESIGN.md) のとおりとし、ここでは「どの仕組みでつなぐか」と「各Botの指示文」を決める。操作用の Web UI・公開URL は使わない（例外は閲覧専用のライブページだけ。3.6 章）。
 
 ## 0. 確かさの区別
 

@@ -60,11 +60,24 @@ TaMap PM（Grok Bot のメインBot）
    └── ✅ Quality Reviewer ─┘
    │ MCP ツール呼び出し（stdio）
    ▼
-TaMap MCP サーバー（tamap/mcp_server.py, FastMCP）
+TaMap MCP サーバー（scripts/mcp_server.sh → tamap/mcp_server.py, FastMCP）
+│  ツール：create_map / update_map / get_map / simulate_delay / list_maps /
+│          set_bot_status / get_status / render_flow_gif / render_team_card / get_live_url
+│  （MCP を登録できないときは scripts/tamap_cli.sh で同じツールをシェルから呼ぶ）
    ├── TaMap Core（tamap/core.py）  検証・影響計算・ボトルネック（LLM 不使用）
-   ├── 共有ストア（tamap/store.py） data/maps/{map_id}.json（revision・履歴・Bot状態）
+   ├── 共有ストア（tamap/store.py） data/maps/{map_id}.json（revision・履歴・Bot状態）  ← 書き込むのはここだけ
    ├── mermaid 生成（tamap/render.py）
-   └── GIF 生成（tamap/animate.py, sprites.py, persona.py） out/{map_id}_flow.gif, out/tamap_team.gif
+   ├── キャラクター（tamap/persona.py 設定・口調、tamap/sprites.py ドット絵）
+   └── GIF 生成（tamap/animate.py）
+         ├── render_flow_gif  → out/{map_id}_flow.gif
+         └── render_team_card → out/tamap_team.gif
+
+閲覧専用ライブページ（チャット内完結の例外・任意）
+   scripts/live_view.sh → tamap/live.py（標準ライブラリの http.server）
+   ├── data/maps/{map_id}.json を読むだけ（0.2 秒ごとに監視。書き込みなし、GET/HEAD 以外は 405）
+   ├── SSE（/events/{map_id}）で Bot の状態・bot_history・say・タスクマップを送る
+   ├── ドット絵と配置は sprites.py / persona.py / animate.py を共有（GIF と同じ見た目を canvas に描く）
+   └── ブラウザ（box の中）→ http://127.0.0.1:8765/live/{map_id}   ※ URL は get_live_url で取れる
 ```
 
 ### 設計原則
@@ -144,8 +157,10 @@ scripts/live_view.sh          # 閲覧専用のライブページ（任意。127
 ## テスト
 
 ```bash
-uv run python -m unittest tests.test_core   # Core・ストア（自動待機・差分・before）・GIF
-uv run python tests/e2e_mcp.py              # stdio MCP サーバーを公式クライアントで起動し、全ツールを呼ぶ
+uv run python -m unittest tests.test_core   # Core・ストア（自動待機・差分・before）・GIF・ライブページ（読み取り専用・SSE）
+uv run python tests/e2e_mcp.py              # stdio MCP サーバーを公式クライアントで起動し、全ツールを呼ぶ（ライブページ・CLI も含む）
+# 任意：ライブページを headless Chrome で開いてスクリーンショットを撮る（Chrome と puppeteer-core が必要。docs/LIVE_VIEW.md）
+# node tests/live_browser.js <base_url> <data_dir> <map_id> <out_dir>
 ```
 
 ## 検証チェックリスト
