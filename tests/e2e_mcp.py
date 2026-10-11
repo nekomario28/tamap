@@ -159,7 +159,8 @@ async def main():
                                                       "source": "e2e test: T4 blocked"}, "update_map（T4をブロック中に）")
             check(not res.isError and d["revision"] == 2, "update_map: rev2")
             check('T4 API実装<br>ブロック中<br>▲ボトルネック"]' in md and "blocked" in md, "T4 blocked -> ボトルネック, orange")
-            diff_line = "変更点：T4 未着手→ブロック中 ／ ボトルネック：T3→T4 ／ 影響先：T4・T6・T7→T6・T7"
+            diff_line = ("変更点：T4 未着手→ブロック中 ／ ボトルネック：T3→T4 ／ "
+                         "影響先：T4・T6・T7→T6・T7（T4はボトルネックに）")
             check(md.startswith(diff_line + "\n\n```mermaid\ngraph LR"), f"diff line above the map: {md.splitlines()[0]}")
             check(md.rsplit("```", 1)[1].strip().startswith("revision 2 ・"), "revision line still last")
             check((d.get("diff") or {}).get("text") == diff_line and d["diff"]["bottleneck"]["changed"]
@@ -242,6 +243,23 @@ async def main():
                                "reason": "断定しすぎ"} and items[1]["before"] == "モックで並行開発する",
                   "quality items keep before/reason")
 
+            # Merge point whose other upstream is done (T5 <- T2 done, T4) must not tie with T4 as a bottleneck,
+            # and 影響先 must explain why it got shorter.
+            mt = [{"id": i, "title": i, "status": st, "depends_on": dep} for i, st, dep in
+                  [("T1", "done", []), ("T2", "done", ["T1"]), ("T3", "todo", ["T1"]), ("T4", "todo", ["T3"]),
+                   ("T5", "todo", ["T2", "T4"]), ("T6", "todo", ["T5"])]]
+            res, md, d = await call(s, "create_map", {"title": "合流点の片側が完了", "tasks": mt})
+            mid2 = d["map_id"]
+            res, md, d = await call(s, "update_map", {"map_id": mid2, "expected_revision": 1,
+                                                      "tasks": [dict(t, status="done") if t["id"] == "T3" else t
+                                                                for t in mt]},
+                                    "update_map（T3完了・ボトルネックがT4に移る）")
+            line = ("変更点：T3 未着手→完了 ／ ボトルネック：T3→T4（T3は完了） ／ "
+                    "影響先：T4・T5・T6→T5・T6（T4はボトルネックに）")
+            check(md.splitlines()[0] == line, f"merge-point diff line: {md.splitlines()[0]}")
+            check(md.count("▲ボトルネック") == 1 and 'T4<br>未着手<br>▲ボトルネック"]' in md,
+                  "only T4 labelled ボトルネック")
+
             res, md, d = await call(s, "render_flow_gif", {"map_id": mid}, "render_flow_gif")
             gif = Path(d.get("gif_path") or "/nonexistent")
             check(not res.isError and gif.name == f"{mid}_flow.gif" and gif.exists()
@@ -276,7 +294,7 @@ async def main():
             res, md, d = await call(s, "simulate_delay", {"map_id": mid, "task_id": "T99"})
             check(res.isError, "unknown task in simulate_delay -> error")
             res, md, d = await call(s, "list_maps", {}, "list_maps")
-            check(len(d["maps"]) == 3, "list_maps: 3 maps")
+            check(len(d["maps"]) == 4, "list_maps: 4 maps")
 
     live_checks(mid)
 

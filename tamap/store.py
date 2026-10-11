@@ -151,14 +151,17 @@ def top_bottlenecks(graph: dict) -> list[str]:
 
 
 def impacted_by(tasks: list[dict], ids: list[str]) -> list[str]:
-    """Unfinished tasks downstream of the given ids (what the bottleneck holds up)."""
+    """Unfinished tasks downstream of any of the given ids (what the bottlenecks hold up).
+
+    A bottleneck that sits downstream of another bottleneck is held up too, so it is included.
+    """
     known = {t["id"] for t in tasks}
     out: list[str] = []
     for tid in ids:
         if tid not in known:
             continue
         for x in core.downstream(tasks, tid):
-            if x["status"] != "done" and x["id"] not in out and x["id"] not in ids:
+            if x["status"] != "done" and x["id"] not in out:
                 out.append(x["id"])
     return sorted(out, key=_id_key)
 
@@ -203,14 +206,33 @@ def compute_diff(old: dict, new: dict) -> dict:
     else:
         change_text = "変化なし"
 
-    def part(name: str, x: list[str], y: list[str]) -> tuple[dict, str]:
-        same = x == y
-        return ({"before": x, "after": y, "changed": not same},
-                f"{name}：変化なし（{_ids(y)}）" if same else f"{name}：{_ids(x)}→{_ids(y)}")
-
     bn_old, bn_new = top_bottlenecks(old["graph"]), top_bottlenecks(new["graph"])
-    bott, bott_text = part("ボトルネック", bn_old, bn_new)
-    imp, imp_text = part("影響先", impacted_by(old["tasks"], bn_old), impacted_by(new["tasks"], bn_new))
+
+    def why_dropped(tid: str, fallback: str | None) -> str | None:
+        if tid not in after:
+            return "削除"
+        if after[tid]["status"] == "done":
+            return "完了"
+        if tid in bn_new:
+            return "ボトルネックに"
+        return fallback
+
+    def part(name: str, x: list[str], y: list[str], fallback: str | None) -> tuple[dict, str]:
+        """`X→Y`, plus why ids left the list so a shorter list is not misread as less impact."""
+        if x == y:
+            return {"before": x, "after": y, "changed": False}, f"{name}：変化なし（{_ids(y)}）"
+        reasons: dict[str, list[str]] = {}
+        for tid in x:
+            r = why_dropped(tid, fallback) if tid not in y else None
+            if r:
+                reasons.setdefault(r, []).append(tid)
+        note = "、".join(f"{_ids(ids)}は{r}" for r, ids in reasons.items())
+        return ({"before": x, "after": y, "changed": True, "dropped": reasons},
+                f"{name}：{_ids(x)}→{_ids(y)}" + (f"（{note}）" if note else ""))
+
+    bott, bott_text = part("ボトルネック", bn_old, bn_new, None)
+    imp, imp_text = part("影響先", impacted_by(old["tasks"], bn_old), impacted_by(new["tasks"], bn_new),
+                         "ボトルネックの下流から外れた")
     segs = [f"変更点：{change_text}", bott_text, imp_text]
     ov, nv = old["validation"], new["validation"]
     if ov["ok"] != nv["ok"] or len(ov["errors"]) != len(nv["errors"]):

@@ -276,11 +276,16 @@ def analyze(tasks: list[dict], validation: dict | None = None) -> dict:
         for tid in sorted(by_id) if metrics[tid]["is_merge_point"]
     ]
     unfinished_ids = [tid for tid in by_id if by_id[tid]["status"] != "done"]
+    # A merge point only adds risk while it still waits on 2+ unfinished upstreams; once all but one
+    # are done it is simply gated by that one, which would otherwise tie with it as a bottleneck.
+    open_merge = {tid: sum(1 for d in set(by_id[tid]["depends_on"])
+                           if d in by_id and d != tid and by_id[d]["status"] != "done") >= 2
+                  for tid in by_id}
     bottlenecks = sorted(
         ({"id": tid, "title": by_id[tid]["title"], "status": by_id[tid]["status"],
           "downstream_unfinished": metrics[tid]["downstream_unfinished"],
           "is_merge_point": metrics[tid]["is_merge_point"],
-          "score": metrics[tid]["downstream_unfinished"] + (1 if metrics[tid]["is_merge_point"] else 0)
+          "score": metrics[tid]["downstream_unfinished"] + (1 if open_merge[tid] else 0)
                    + (2 if by_id[tid]["status"] == "blocked" else 0)}
          for tid in unfinished_ids),
         key=lambda x: (-x["score"], -x["downstream_unfinished"], x["id"]))
