@@ -43,7 +43,8 @@ TaMap PM はメインBotそのものです。メインBotとPMを別々のBotと
 4. **Action Planning**：PM が次の行動を最大 3 件提案する（ツール側でも 4 件以上は受け付けない）。
 5. **Quality Check**：重複ID、存在しない参照、自己依存、循環、不正な状態をコードで検出し、図の中で赤く示す。Quality Reviewer の指摘は「直す前→直した後」の形で保存する。
 6. **revision と差分**：更新は同じ `map_id` の `revision` を 1 つ上げる。古い revision からの更新は拒否する。更新すると、変更点・ボトルネック・影響先の差分が 1 行で返る。
-7. **流れのGIF**：Bot の状態の履歴（`bot_history`）から、PM→Map Architect→Risk Analyst→Quality Reviewer→PM の 1 周を GIF にする。
+7. **流れのGIF**：Bot の状態の履歴（`bot_history`）から、PM→Map Architect→Risk Analyst→Quality Reviewer→PM の 1 周をレトロなドット絵の GIF にする。
+8. **キャラクター**：4 体はそれぞれ色・モチーフ・口調を持つキャラクター（📋まとめ役／🗺️地図職人／⚠️心配性の探偵／✅赤ペン先生）。GIF のふきだし、チーム紹介の GIF、稼働図の顔文字に出る（`tamap/persona.py`、詳細は docs/GROKBOT_INTEGRATION.md 3.5 章）。
 
 入力されていない数値（所要日数など）は計算しません。推定と未確認の事項は、そう分かるように書きます。
 
@@ -63,7 +64,7 @@ TaMap MCP サーバー（tamap/mcp_server.py, FastMCP）
    ├── TaMap Core（tamap/core.py）  検証・影響計算・ボトルネック（LLM 不使用）
    ├── 共有ストア（tamap/store.py） data/maps/{map_id}.json（revision・履歴・Bot状態）
    ├── mermaid 生成（tamap/render.py）
-   └── GIF 生成（tamap/animate.py） out/{map_id}_flow.gif
+   └── GIF 生成（tamap/animate.py, sprites.py, persona.py） out/{map_id}_flow.gif, out/tamap_team.gif
 ```
 
 ### 設計原則
@@ -83,9 +84,10 @@ TaMap MCP サーバー（tamap/mcp_server.py, FastMCP）
 | `get_map(map_id)` | 現在の図。structuredContent に tasks と analysis | 変わらない |
 | `simulate_delay(map_id, task_id)` | What-if。遅延元を太枠、影響を受けるタスクとエッジを黄色で示す。保存しない | 変わらない |
 | `list_maps()` | map_id の一覧 | - |
-| `set_bot_status(map_id, bot, status, note?)` | Bot の状態を記録する。専門Botが `working` になると、PM は自動で `idle`（「〜の結果待ち」）になる | 変わらない |
+| `set_bot_status(map_id, bot, status, note?, say?)` | Bot の状態を記録する。専門Botが `working` になると、PM は自動で `idle`（「〜の結果待ち」）になる。`say` はそのBotの口調の一言（GIF のふきだし） | 変わらない |
 | `get_status(map_id)` | Bot の稼働図（mermaid）と直近の履歴 | 変わらない |
 | `render_flow_gif(map_id)` | 直近 1 周の流れを `out/{map_id}_flow.gif` に書き出し、そのパスを返す | 変わらない |
+| `render_team_card()` | 4 体のチーム紹介の GIF を `out/tamap_team.gif` に書き出す（挨拶に添付） | - |
 
 `update_map` が返すチャット用テキストの例：
 
@@ -155,7 +157,7 @@ uv run python tests/e2e_mcp.py              # stdio MCP サーバーを公式ク
 - [ ] Quality Reviewer の指摘が PM の最終回答に反映される（Grok Bot 上では未確認）
 - [x] MCP ツールの戻り値から map_id と最新の図（mermaid）を取得できる（e2e。Grok Bot から MCP として呼べるかは未確認）
 - [x] 追加の更新で、**同じ map_id** の revision と図が更新され、差分の 1 行が付く。古い revision からの更新は拒否される（e2e）
-- [x] Bot の状態を記録すると、作業中のBotだけが光る（専門Botが作業中なら PM は待機）。その流れを GIF に書き出せる（unittest・e2e。GIF は開発用 VM で生成して目視）
+- [x] Bot の状態を記録すると、作業中のBotだけが光る（専門Botが作業中なら PM は待機）。その流れを GIF に書き出せる。4 体のキャラクター（ドット絵・ふきだし・チーム紹介）も含む（unittest・e2e。GIF は開発用 VM で生成して目視）
 - [ ] 書き込みの認証：stdio MCP サーバーを起動できる人（＝ box にアクセスできる人）だけが書ける、という境界しかない。トークンによる認証は無い
 - [ ] 90 秒以内に一連の流れを実演できる（未リハーサル）
 

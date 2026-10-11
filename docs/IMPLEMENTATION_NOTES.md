@@ -19,6 +19,7 @@ README はチャット内完結の方式に書き換え済み（UX_DESIGN P7）�
 | `tamap/store.py` | 共有ストア `data/maps/{map_id}.json`（`TAMAP_DATA_DIR` で変更可）。fcntlロック＋アトミック書き込み。`update_map` は `expected_revision` 不一致を拒否。Bot状態（`bots`, `bot_history` 直近30件）も同じファイルに保持 |
 | `tamap/render.py` | mermaid 生成（タスクマップ `graph LR`／Bot稼働 `flowchart LR`）。ラベル中の `" < > & `` ` は mermaid のエンティティコードでエスケープ |
 | `tamap/animate.py` | 流れのGIF（Pillow）。`bot_history` の直近1周から `out/{map_id}_flow.gif`（`TAMAP_OUT_DIR` で変更可）。作業中のBotだけ光る、依頼=青／結果=黄の封筒、最後にボトルネックからの影響の広がりと3アクション、QRバッジ（件数は `analysis.quality.items`） |
+| `tamap/persona.py` / `tamap/sprites.py` | 4 体のキャラクター（役割・色・モチーフ・口調・状態の顔文字）と、レトロなドット絵（16×14 の格子＋小物）。GIF・稼働図 mermaid・指示文で共通に使う |
 | `tamap/mcp_server.py` | stdio MCP サーバー（公式 `mcp` Python SDK 1.x の FastMCP） |
 | `scripts/mcp_server.sh` | MCPサーバーの起動口（Grok Bot に登録するコマンド） |
 | `scripts/tamap_cli.sh` | MCP を登録できない場合のシェル用の代替。同じツール関数を呼ぶ（stdout=チャット用テキスト、stderr=structuredContent） |
@@ -36,7 +37,8 @@ README はチャット内完結の方式に書き換え済み（UX_DESIGN P7）�
 | `simulate_delay(map_id, task_id)` | what-if。遅延元を太枠、影響タスクとそのエッジを黄色。保存しない | 不変 |
 | `list_maps()` | map_id 一覧（短い箇条書き） | - |
 | `set_bot_status(map_id, bot, status, note?)` | bot: pm / map_architect / risk_analyst / quality_reviewer、status: idle / working / done / error。稼働図を返す。専門Botが working になると pm を自動で idle（「〜の結果待ち」）にし、履歴にも残す | 不変 |
-| `render_flow_gif(map_id)` | 直近1周の流れを GIF に書き出し、パスを返す | 不変 |
+| `render_flow_gif(map_id)` | 直近1周の流れを GIF に書き出し、パスを返す（キャラのふきだしは `set_bot_status` の `say`、無ければ口ぐせ） | 不変 |
+| `render_team_card()` | 4 体のチーム紹介の GIF（`out/tamap_team.gif`） | - |
 | `get_status(map_id)` | 稼働図（ユーザー → TaMap PM → Map Architect → Risk Analyst → Quality Reviewer → PM） | 不変 |
 
 タスクマップ図の表現：状態色（完了=緑／進行中=青／未着手=灰／ブロック中=橙）、遅延影響=黄、検証エラー=赤ノード、存在しない参照は赤ノード＋赤破線「未定義」、循環は赤破線「循環」、合流点は「◆合流点」、ボトルネックは「▲ボトルネック」＋破線太枠、クリティカルパス候補は太線（`==>`）、警告は「△…」。
@@ -53,8 +55,9 @@ README はチャット内完結の方式に書き換え済み（UX_DESIGN P7）�
 
 - `uv run python -m unittest tests.test_core` → 8件 OK：PM の自動待機、差分の1行（T4 ブロック中 → ボトルネック T3→T4、T3 完了 → 変化なし）、`before` の保存、GIF の生成。
 - `uv run python tests/e2e_mcp.py` → 60項目すべて PASS：上記に加え、`render_flow_gif`、`tamap_cli.sh`。
-- GIF：サンプル1周（10イベント）で 71フレーム・約25秒・約480KB。フレームを PNG で取り出して目視した（フォントは WenQuanYi Micro Hei）。Grok Bot の box でのフォントと添付は未確認。
+- GIF（キャラクター化の前の版）：サンプル1周（10イベント）で 71フレーム・約25秒・約480KB。フレームを PNG で取り出して目視した（フォントは WenQuanYi Micro Hei）。Grok Bot の box でのフォントと添付は未確認。
 - P0（Grok Bot のチャットでの mermaid 描画と GIF の再生）は確認済みと報告を受けている（本作業では実施していない）。
+- キャラクター化（Yuu さんのフィードバック）：unittest 9件 OK、e2e 62項目 PASS。flow GIF（サンプル1周で約25秒・約650KB）とチーム紹介の GIF（5フレーム・約1.7秒・約70KB）を目視した。`docs/sample_output.md` の mermaid 11ブロックを headless Chrome＋mermaid v11 で描画してエラーなし（稼働図の絵文字・顔文字を含む）。
 
 ## 未確認
 
