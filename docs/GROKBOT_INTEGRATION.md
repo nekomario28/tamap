@@ -397,7 +397,7 @@ PM が `set_bot_status(pm, working)` と `set_bot_status(map_architect, working)
 
 対処: `create_map` / `update_map` / `set_bot_status` の読み取り・変更・書き込みは、すべて1つの排他ロックの中で行う。ロックは `data/maps/.lock`（`TAMAP_DATA_DIR` を変えたときはその中）に取る。このファイルは置き換えない。マップの JSON を `os.replace` で差し替える側にはロックを掛けない（差し替えると古い inode にロックが残り、次のプロセスは新しい inode を別のロックとして取ってしまう）。
 
-並列でも、各 `note` の履歴は残る。ただし「結果待ち」は、専門Botを working にした時点で PM が待機以外のときだけ付く。PM の working が後から保存されると、PM は作業中のままになる。だから 5.1 のとおり、PM の working を先に、専門Botの working を次に、1つずつ呼ぶ。
+並列でも、各 `note` の履歴は残る。専門Botを working にすると、PM がすでに待機中でも「<そのBot>の結果待ち」へ更新する。ただし PM の working が後から保存されると、PM は作業中のままになる。だから 5.1 のとおり、PM の working を先に、専門Botの working を次に、1つずつ呼ぶ。
 
 ### 8.2 稼働図が、完了したBotの say を出さない
 

@@ -439,8 +439,8 @@ def _note_and_say(note: str | None, say: str | None) -> tuple[str | None, str | 
 def set_bot_status(map_id: str, bot: str, status: str, note: str | None = None, say: str | None = None) -> dict:
     """Record a bot's activity state on a map. Does not bump the map revision (operational data).
 
-    Only one bot lights up at a time: when a specialist becomes `working`, a working PM is put back
-    to `idle` (note「<Bot>の結果待ち」) and that is recorded in bot_history too.
+    Only one bot lights up at a time: when a specialist becomes `working`, PM is put back to `idle`
+    with note「<Bot>の結果待ち」, updating an older specialist's wait note if needed.
     `say` is an optional in-character one-liner shown in the flow GIF speech bubble (note stays factual).
     When the client schema has no say argument, put it in note: 「事実 ｜ say:一言」 or {"note","say"}.
     """
@@ -459,10 +459,14 @@ def set_bot_status(map_id: str, bot: str, status: str, note: str | None = None, 
         ts = now_iso()
         bots = map_.setdefault("bots", {})
         hist = map_.setdefault("bot_history", [])
-        if key != "pm" and st == "working" and (bots.get("pm") or {}).get("status", "idle") != "idle":
+        if key != "pm" and st == "working":
             wait = f"{BOT_NAMES[key]}の結果待ち"
-            bots["pm"] = {"status": "idle", "note": wait, "updated_at": ts}
-            hist.append({"at": ts, "bot": "pm", "status": "idle", "note": wait, "auto": True})
+            pm = bots.get("pm") or {}
+            if pm.get("status", "idle") != "idle":
+                bots["pm"] = {"status": "idle", "note": wait, "updated_at": ts}
+                hist.append({"at": ts, "bot": "pm", "status": "idle", "note": wait, "auto": True})
+            elif pm.get("note") != wait:
+                bots["pm"] = {"status": "idle", "note": wait, "updated_at": ts}
         bots[key] = {"status": st, "note": note, "updated_at": ts, **({"say": say} if say else {})}
         hist.append({"at": ts, "bot": key, "status": st, "note": note, **({"say": say} if say else {})})
         map_["bot_history"] = trim_history(hist)

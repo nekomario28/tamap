@@ -215,6 +215,8 @@ async def main():
                 check(not res.isError, f"set_bot_status {bot}={st}")
             check(md.startswith("```mermaid\nflowchart LR") and "class RA working" in md, "RA shown working (blue)")
             check("class MA done" in md, "MA shown done (green)")
+            check(d["bots"]["pm"]["status"] == "idle" and d["bots"]["pm"]["note"] == "Risk Analystの結果待ち",
+                  "idle PM wait note follows the newly working specialist")
             check("linkStyle 2 stroke:#7c3aed,stroke-width:5px" in md, "edge into RA emphasised")
             check("- " in md.rsplit("```", 1)[1] and "Risk Analyst: 分析中" in md, "history lines below")
             res, md, d = await call(s, "set_bot_status", {"map_id": mid, "bot": "quality_reviewer", "status": "error",

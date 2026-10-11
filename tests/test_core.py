@@ -107,10 +107,13 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(m["bots"]["pm"]["note"], "Map Architectの結果待ち")
         self.assertEqual([(h["bot"], h["status"]) for h in m["bot_history"]],
                          [("pm", "working"), ("pm", "idle"), ("map_architect", "working")])
-        # PM already idle: no extra history entry; PM working while specialists are done stays allowed.
+        # A new specialist takes over while PM is idle: keep the wait note pointed at that bot.
         store.set_bot_status(mid, "map_architect", "done")
         m = store.set_bot_status(mid, "risk_analyst", "working")
+        self.assertEqual(m["bots"]["pm"]["note"], "Risk Analystの結果待ち")
         self.assertEqual(len(m["bot_history"]), 5)
+        self.assertEqual((m["bot_history"][-1]["bot"], m["bot_history"][-1]["status"]),
+                         ("risk_analyst", "working"))
         m = store.set_bot_status(mid, "pm", "working", "統合中")
         self.assertEqual(m["bots"]["pm"]["status"], "working")
         self.assertEqual(m["revision"], 1)
