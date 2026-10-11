@@ -176,7 +176,7 @@ async def main():
             res, md, d = await call(s, "simulate_delay", {"map_id": mid, "task_id": "T4"}, "simulate_delay（T4）")
             check(d.get("impacted_ids") == ["T6", "T7"], f"T4 delay impacts T6,T7 ({d.get('impacted_ids')})")
             check("遅延影響 1段先" in md and "遅延影響 2段先" in md and "⏱遅延元" in md, "impact labels in nodes")
-            check("class n5,n6 impact" in md, "T6,T7 nodes yellow")
+            check("class n5,n6 impact" in md, "T6,T7 nodes impact (orange)")
             check("what-if: T4" in md, "footer mentions what-if")
             res2, md2, d2 = await call(s, "get_map", {"map_id": mid})
             check(d2["revision"] == 2, "simulate_delay did not change revision")
@@ -187,7 +187,7 @@ async def main():
             res, md, d = await call(s, "set_bot_status", {"map_id": mid, "bot": "map_architect", "status": "working",
                                                           "note": "T1〜T7を構造化中", "say": "線、7本つなぐっす。"},
                                     "set_bot_status（MA作業中 → PMは自動で待機）")
-            check('"🗺️ Map Architect<br>(•ω•)✧ 作業中<br>「線、7本つなぐっす。」' in md
+            check('"🗺️ Map Architect<br>(•ω•)✧ 分析中<br>「線、7本つなぐっす。」' in md
                   and d["bot_history"][-1].get("say") == "線、7本つなぐっす。", "character face + say in status chart")
             check(d["bots"]["pm"]["status"] == "idle" and d["bots"]["pm"]["note"] == "Map Architectの結果待ち",
                   "specialist working -> pm idle (結果待ち) automatically")
@@ -203,8 +203,8 @@ async def main():
                 check(not res.isError, f"set_bot_status {bot}={st}")
             check(md.startswith("```mermaid\nflowchart LR") and "class RA working" in md, "RA shown working (blue)")
             check("class MA done" in md, "MA shown done (green)")
-            check("linkStyle 2 stroke:#2563eb,stroke-width:5px" in md, "edge into RA emphasised")
-            check("- " in md.rsplit("```", 1)[1] and "Risk Analyst: 作業中" in md, "history lines below")
+            check("linkStyle 2 stroke:#7c3aed,stroke-width:5px" in md, "edge into RA emphasised")
+            check("- " in md.rsplit("```", 1)[1] and "Risk Analyst: 分析中" in md, "history lines below")
             res, md, d = await call(s, "set_bot_status", {"map_id": mid, "bot": "quality_reviewer", "status": "error",
                                                           "note": "T9参照を確認できず"})
             res, md, d = await call(s, "set_bot_status", {"map_id": mid, "bot": "risk_analyst", "status": "done"})
@@ -261,7 +261,7 @@ async def main():
                                                       "source": "e2e test (broken sample)"}, "create_map（不整合サンプル）")
             check(not d["ok"] and d["error_count"] == 3, f"broken: 3 errors ({d.get('error_count')})")
             for needle in ("✖重複ID ×2", "✖存在しない参照: T9", "✖循環", '["T9<br>✖存在しないタスク"]',
-                           "-. 未定義 .->", "-. 循環 .->", "stroke:#ef4444,stroke-width:3px,stroke-dasharray:5 4",
+                           "-. 未定義 .->", "-. 循環 .->", "stroke:#991b1b,stroke-width:3px,stroke-dasharray:5 4",
                            " err\n", "検証エラー3件"):
                 check(needle in md, f"broken output contains {needle!r}")
 

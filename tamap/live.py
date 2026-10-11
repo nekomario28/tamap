@@ -67,10 +67,13 @@ def scene_spec() -> dict:
         "w": a.W, "h": a.H, "scale": a.SCALE, "bubble_y": a.BUBBLE_Y, "sprite_y": a.SPRITE_Y, "link_y": a.LINK_Y,
         "name_y": a.NAME_Y, "caption_y": a.CAPTION_Y, "nodes": [list(n) for n in a.NODES],
         "colors": {"bg": _hex(a.BG), "ink": _hex(a.INK), "muted": _hex(a.MUTED), "request": _hex(a.REQUEST),
-                   "result": _hex(a.RESULT), "err": _hex(a.ERR), "impact": _hex(a.IMPACT),
+                   "result": _hex(a.RESULT), "err": _hex(a.ERR), "bot_err": _hex(a.BOT_ERR),
+                   "glow_fill": _hex(persona.BOT_GLOW[0]), "glow_edge": _hex(persona.BOT_GLOW[1]), "impact": _hex(a.IMPACT),
                    "sprite_ink": _hex(sprites.INK), "sparkle": "#facc15"},
         "bot_fill": {k: _hex(v) for k, v in a.BOT_FILL.items()},
         "task_fill": {k: _hex(v) for k, v in a.TASK_FILL.items()},
+        "all_done_caption": a.ALL_DONE_CAPTION,
+        "edge": {"normal": _hex(a.EDGE), "done": _hex(a.EDGE_DONE), "hot": _hex(a.EDGE_HOT)},
         "status_ja": a.BOT_STATUS_JA, "task_status_ja": core.STATUS_LABELS_JA,
         "sprites": spr, "glow": {k: list(a.glow_box(k, 0)) for k in persona.PERSONAS}, "sparkle": [list(p) for p in sprites.SPARKLE], "envelope": sprites.ENVELOPE,
         "personas": {k: {"name": p["name"], "emoji": p["emoji"], "role": p["role"], "color": _hex(p["color"]),
@@ -89,24 +92,31 @@ def snapshot(map_id: str) -> dict:
                        "note": h.get("note"), "say": h.get("say"), "auto": bool(h.get("auto")),
                        "name": store.BOT_NAMES[h["bot"]], "status_ja": animate.BOT_STATUS_JA[h["status"]],
                        "line": persona.line(h["bot"], h["status"], h.get("say"), qr)})
-    pos, bw, bh = animate.task_layout(m["tasks"])
+    lay = animate.map_layout(m["tasks"])
+    pos, bw, bh = lay["pos"], lay["box_w"], lay["box_h"]
     err_ids = set(m["validation"].get("error_task_ids") or [])
-    bott = set(store.top_bottlenecks(m["graph"]))
+    bott_list, impact = animate.impact_distances(m)
+    bott = set(bott_list)
     seen, tasks = set(), []
     for t in m["tasks"]:
         if t["id"] in seen:
             continue
         seen.add(t["id"])
         x, y = pos[t["id"]]
+        head, body, nmax = animate.task_label(t, t["id"] in bott, bh)
         tasks.append({"id": t["id"], "title": t["title"], "status": t["status"], "x": x, "y": y,
-                      "error": t["id"] in err_ids, "bottleneck": t["id"] in bott})
-    edges = sorted({(d, t["id"]) for t in m["tasks"] for d in t["depends_on"] if d in pos and d != t["id"]})
+                      "label": {"head": head, "body": body, "lines": nmax},
+                      "error": t["id"] in err_ids, "bottleneck": t["id"] in bott,
+                      "impact": impact.get(t["id"])})
+    done = {t["id"] for t in m["tasks"] if t["status"] == "done"}
+    edges = [[e["from"], e["to"], e["points"], e["arrow"], e["from"] in done] for e in lay["edges"]]
     return {"map_id": m["map_id"], "title": m["title"], "revision": m["revision"], "updated_at": m["updated_at"],
             "updated_time": hms(m["updated_at"]), "ok": m["validation"]["ok"],
             "error_count": len(m["validation"]["errors"]), "bots": bots, "events": events,
-            "tasks": tasks, "edges": [list(e) for e in edges], "box_w": bw, "box_h": bh,
+            "impact_visible": bool(impact) and animate.impact_visible(bots), "bottlenecks": bott_list,
+            "tasks": tasks, "edges": edges, "box_w": bw, "box_h": bh,
             "actions": [x.get("text", "") for x in (ana.get("pm") or {}).get("actions", [])][:3],
-            "quality_count": qr}
+            "quality_count": qr, "all_done": persona.all_done(bots)}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -343,10 +353,12 @@ function draw(now) {
     for (let x = S.nodes[i][2] + 50; x < S.nodes[i + 1][2] - 50; x += 12) rect(x, y - 2, x + 5, y + 2, "#cbd5e1");
   const last = snap.events[snap.events.length - 1];
   for (const [k, label, x] of S.nodes) {
-    if (k === "user") { pixelBox(x - 46, y - 24, x + 46, y + 24, "#ffffff", C.muted); text(label, x, y, 16, C.ink); continue; }
+    if (k === "user") {
+      pixelBox(x - 46, y - 24, x + 46, y + 24, "#ffffff", C.muted); text(label, x, y, 16, C.ink); continue;
+    }
     const st = snap.bots[k].status, p = S.personas[k];
     const bob = st === "working" && phase ? -sc : 0;
-    if (st === "working") { const g = S.glow[k]; roundRect(x + g[0], g[1], x + g[2], g[3], 14, "#bfdbfe", "#60a5fa", 2); }
+    if (st === "working") { const g = S.glow[k]; roundRect(x + g[0], g[1], x + g[2], g[3], 14, C.glow_fill, C.glow_edge, 2); }
     cells(st === "working" && blink ? S.sprites[k].working_blink : S.sprites[k][st], x - 8 * sc, S.sprite_y + bob, sc);
     if (st === "working") cells(S.sparkle.map(([gx, gy]) => [gx, gy, C.sparkle]), phase ? x + 46 : x - 60, S.sprite_y + (phase ? 4 : 26), 3);
     else if (st === "idle") text(phase ? "zZ" : "z", x - 40, S.sprite_y + 6, 15, C.muted, "left");
@@ -366,32 +378,55 @@ function draw(now) {
   // caption
   const cy = S.caption_y;
   pixelBox(24, cy - 18, S.w - 24, cy + 18, "#ffffff", "#94a3b8");
-  const cap = last ? last.name + " " + last.status_ja + (last.note ? "：" + last.note : "") : "まだBotの記録はありません";
+  const cap = snap.all_done ? S.all_done_caption
+    : last ? last.name + " " + last.status_ja + (last.note ? "：" + last.note : "") : "まだBotの記録はありません";
   font(18); ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.fillStyle = C.ink; ctx.fillText(fit(cap, S.w - 300), 40, cy);
   text((last ? last.time + " JST ・ " : "") + "ライブ", S.w - 40, cy, 14, C.muted, "right");
   // task map
   const bw = snap.box_w / 2, bh = snap.box_h / 2, pos = {};
   for (const t of snap.tasks) pos[t.id] = t;
-  ctx.lineWidth = 2; ctx.strokeStyle = "#94a3b8";
-  for (const [a, b] of snap.edges) {
-    ctx.beginPath(); ctx.moveTo(pos[a].x + bw, pos[a].y); ctx.lineTo(pos[b].x - bw, pos[b].y); ctx.stroke();
+  // delay impact (same as the GIF's last frames): impacted tasks orange, edges into them dark orange
+  const hit = t => snap.impact_visible && t.impact !== null && t.impact !== undefined;
+  // edges are routed in Python (tamap/layout.py, same as the GIF): [from, to, polyline, arrowhead, from_done]
+  for (const [a, b, pts, arrow, fromDone] of snap.edges) {
+    const hot = hit(pos[b]) && (pos[a].bottleneck || hit(pos[a]));
+    const col = hot ? S.edge.hot : fromDone ? S.edge.done : S.edge.normal;
+    ctx.lineWidth = hot ? 4 : 2; ctx.strokeStyle = col; ctx.lineJoin = "round"; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let k = 1; k < pts.length - 1; k++) ctx.lineTo(pts[k][0], pts[k][1]);  // last point = arrow tip
+    ctx.stroke();
+    ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(arrow[0][0], arrow[0][1]);
+    ctx.lineTo(arrow[1][0], arrow[1][1]); ctx.lineTo(arrow[2][0], arrow[2][1]); ctx.closePath(); ctx.fill();
   }
-  const fs = snap.box_h >= 40 ? 14 : 12;
+  const fs = snap.box_h >= 52 ? 13 : 12, lh = fs + 3;
   for (const t of snap.tasks) {
-    const fill = t.error ? C.err : S.task_fill[t.status];
+    const fill = t.error ? C.err : hit(t) ? C.impact : S.task_fill[t.status];
     roundRect(t.x - bw, t.y - bh, t.x + bw, t.y + bh, 8, fill, t.bottleneck ? "#7c2d12" : "#4b5563", t.bottleneck ? 4 : 1);
-    const tc = t.status === "todo" && !t.error ? C.ink : "#ffffff";
-    font(fs); const l1 = fit(t.id + " " + t.title, snap.box_w - 12);
-    const l2 = S.task_status_ja[t.status] + (t.bottleneck ? " ▲" : "");
-    if (snap.box_h >= 34) { text(l1, t.x, t.y - 9, fs, tc); text(l2, t.x, t.y + 10, fs, tc); }
-    else text(l1, t.x, t.y, fs, tc);
+    const tc = (t.status === "todo" || hit(t)) && !t.error ? C.ink : "#ffffff";
+    font(fs);
+    let lines = wrap(t.label.body, snap.box_w - 10, t.label.lines);
+    const head = t.label.head ? fit(t.label.head, snap.box_w - 8) : "";
+    if (head && t.label.lines === 2) lines = [head].concat(lines); else if (head) lines.push(head);
+    const y0 = t.y - lh * (lines.length - 1) / 2;
+    lines.forEach((ln, k) => text(ln, t.x, y0 + lh * k, fs, tc));
   }
+}
+
+function wrap(t, w, maxLines) {  // same as animate._wrap: break per character, ellipsis on the last line
+  t = t.replace(/〜/g, "～");
+  const lines = []; let cur = "";
+  for (const ch of t) {
+    if (ctx.measureText(cur + ch).width > w) { lines.push(cur); cur = ch; } else cur += ch;
+  }
+  lines.push(cur);
+  if (lines.length > maxLines) return lines.slice(0, maxLines - 1).concat([fit(lines.slice(maxLines - 1).join(""), w)]);
+  return lines;
 }
 
 function envelopesFor(e, bots) {
   if (e.bot !== "pm" && e.status === "working") return ["pm", e.bot, S.colors.request];
   if (e.bot !== "pm" && e.status === "done") return [e.bot, "pm", S.colors.result];
-  if (e.bot !== "pm" && e.status === "error") return [e.bot, "pm", S.colors.err];
+  if (e.bot !== "pm" && e.status === "error") return [e.bot, "pm", S.colors.bot_err];
   const busy = ["map_architect", "risk_analyst", "quality_reviewer"].some(k => bots[k].status !== "idle");
   if (e.bot === "pm" && e.status === "working" && !busy) return ["user", "pm", S.colors.request];
   return null;

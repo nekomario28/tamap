@@ -1,10 +1,38 @@
 """The 4 TaMap bots as characters: role, colour, motif, face per status and a line in their own voice.
 
 Shared by the flow GIF (pixel sprites), the bot-status mermaid and the bot instructions, so that each
-bot looks and talks the same everywhere. Status colours (idle grey / working blue / done green /
-error red) stay the source of truth for state; the character colour only identifies the bot.
+bot looks and talks the same everywhere. The status palettes below are the single source of truth for
+the live page, the flow GIF and both mermaid diagrams; the character colour only identifies the bot.
 """
 from __future__ import annotations
+
+# Bot status words. A bot being "done" means its ANALYSIS is done — not that the project's tasks are.
+BOT_STATUS_JA = {"idle": "待機", "working": "分析中", "done": "分析完了", "error": "エラー"}
+ALL_DONE_CAPTION = "4体とも分析完了"
+
+# Colour families never overlap, so bot state and task state can be told apart by colour alone.
+# Bots = slate / violet / indigo / fuchsia (cool purples). Tasks = traffic-light green / cyan / yellow / red,
+# plus orange for the delay impact and dark red for invalid tasks.
+BOT_COLORS = {"idle": (148, 163, 184), "working": (139, 92, 246), "done": (67, 56, 202), "error": (192, 38, 211)}
+BOT_STROKE = {"idle": (100, 116, 139), "working": (109, 40, 217), "done": (49, 46, 129), "error": (134, 25, 143)}
+BOT_GLOW = ((237, 233, 254), (167, 139, 250))   # fill / outline behind the working bot
+BOT_LINK_HOT = (124, 58, 237)                    # mermaid edge into the working bot
+TASK_COLORS = {"done": (34, 197, 94), "in_progress": (8, 145, 178), "todo": (253, 224, 71), "blocked": (220, 38, 38)}
+TASK_STROKE = {"done": (21, 128, 61), "in_progress": (14, 116, 144), "todo": (161, 98, 7), "blocked": (153, 27, 27)}
+TASK_IMPACT, TASK_IMPACT_STROKE = (251, 146, 60), (194, 65, 12)
+TASK_ERR, TASK_ERR_STROKE = (127, 29, 29), (69, 10, 10)
+TASK_EDGE_HOT = (234, 88, 12)
+TASK_INK_ON = {"todo", "impact"}                 # light fills -> dark text
+
+
+def hexc(c) -> str:
+    return "#%02x%02x%02x" % tuple(c)
+
+
+def all_done(bots: dict) -> bool:
+    """All 4 bots have finished their analysis (used only to word the caption, never as a task status)."""
+    return all((bots.get(k) or {}).get("status") == "done" for k in PERSONAS)
+
 
 PERSONAS: dict[str, dict] = {
     "pm": {
