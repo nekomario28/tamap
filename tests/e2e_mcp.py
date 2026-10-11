@@ -6,6 +6,7 @@ Usage: uv run python tests/e2e_mcp.py   (exits non-zero on failure)
 import asyncio
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -185,6 +186,16 @@ async def main():
             check(res.isError, "unknown task in simulate_delay -> error")
             res, md, d = await call(s, "list_maps", {}, "list_maps")
             check(len(d["maps"]) == 3, "list_maps: 3 maps")
+
+    # Shell fallback (scripts/tamap_cli.sh) calls the same tool functions against the same data dir.
+    cli = str(ROOT / "scripts" / "tamap_cli.sh")
+    p = subprocess.run([cli, "simulate_delay", json.dumps({"map_id": mid, "task_id": "T4"})], cwd="/tmp", env=ENV,
+                       capture_output=True, text=True, timeout=60)
+    check(p.returncode == 0 and p.stdout.startswith("```mermaid") and "what-if: T4" in p.stdout
+          and json.loads(p.stderr)["impacted_ids"] == ["T6", "T7"], "tamap_cli.sh simulate_delay")
+    p = subprocess.run([cli, "get_map"], input=json.dumps({"map_id": "nosuchmap"}), env=ENV,
+                       capture_output=True, text=True, timeout=60)
+    check(p.returncode == 1 and "エラー" in p.stdout, "tamap_cli.sh error -> exit 1")
 
     out = ["# TaMap MCP 出力サンプル", "",
            "`tests/e2e_mcp.py` が stdio MCP サーバーを公式 mcp クライアントで実際に呼び、各ツールが返したチャット用テキスト（mermaid）をそのまま貼ったものです（自動生成）。時刻は実行時のもの。",
