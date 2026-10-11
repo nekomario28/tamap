@@ -1,7 +1,8 @@
 """Render TaMap state as mermaid diagrams to paste into the Grok Bot chat as-is.
 
 - render_map(): task map (graph LR). Notes (merge point / bottleneck / delay impact / validation
-  errors) are expressed with node labels, colours and edge styles; one revision line below.
+  errors) are expressed with node labels, colours and edge styles; one revision line below
+  (after update_map, a one-line diff above the block).
 - render_status(): bot activity flowchart (User → PM → Map Architect → Risk Analyst → Quality Reviewer → PM)
   plus a few recent status changes below.
 """
@@ -180,8 +181,10 @@ def footer(m: dict, whatif: dict | None = None) -> str:
             f"{check}{extra}")
 
 
-def render_map(m: dict, whatif: dict | None = None) -> str:
-    return mermaid_map(m, whatif) + "\n" + footer(m, whatif)
+def render_map(m: dict, whatif: dict | None = None, diff: dict | None = None) -> str:
+    """Mermaid block + revision line. With diff (update_map), the one-line diff goes on top (UX_DESIGN 4.5)."""
+    head = f"{diff['text']}\n\n" if diff else ""
+    return head + mermaid_map(m, whatif) + "\n" + footer(m, whatif)
 
 
 # ---------- bot status ----------
