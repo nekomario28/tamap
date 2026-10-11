@@ -211,12 +211,13 @@ class FlowRenderer:
 
     # ---------- drawing ----------
 
-    def base(self, caption: str, sub: str = "") -> tuple[Image.Image, ImageDraw.ImageDraw]:
+    def base(self, caption: str, sub: str = "", rev: int | None = None) -> tuple[Image.Image, ImageDraw.ImageDraw]:
         img = Image.new("RGB", (W, H), BG)
         d = ImageDraw.Draw(img)
         head = f"TaMap ・ {self.m['title']}"
         d.text((24, 14), _fit(d, head, self.font(20), 640), font=self.font(20), fill=INK)
-        d.text((W - 24, 16), f"map_id {self.m['map_id']} ・ rev {self.m['revision']}", font=self.font(15),
+        rev = self.m["revision"] if rev is None else rev
+        d.text((W - 24, 16), f"map_id {self.m['map_id']} ・ rev {rev}", font=self.font(15),
                fill=MUTED, anchor="ra")
         _pixel_box(d, (24, CAPTION_Y - 18, W - 24, CAPTION_Y + 18), (255, 255, 255), (148, 163, 184))
         d.text((40, CAPTION_Y), _fit(d, caption, self.font(18), W - 300), font=self.font(18), fill=INK, anchor="lm")
@@ -302,17 +303,31 @@ class FlowRenderer:
                 _center(d, (x, y), line1, f, txt)
 
     def actions_panel(self, d):
-        if not self.actions:
-            return
-        f = self.font(16)
-        h = 44 + 28 * len(self.actions)
-        x0, y0 = 300, H - 18 - h
-        _pixel_box(d, (x0, y0, W - 24, H - 18), (255, 255, 255), (37, 99, 235))
-        d.text((x0 + 16, y0 + 12), "次の3アクション", font=self.font(17), fill=(30, 64, 175))
+        """Final card. It replaces the task map area (drawn instead of the map, never on top of it)."""
+        x0, y0, x1, y1 = 24, TASKS_TOP - 6, W - 24, H - 14
+        _pixel_box(d, (x0, y0, x1, y1), (255, 255, 255), (37, 99, 235))
+        d.text((x0 + 20, y0 + 14), "次の3アクション" if self.actions else "結果", font=self.font(19),
+               fill=(30, 64, 175))
+        f = self.font(17)
         for i, a in enumerate(self.actions):
-            d.text((x0 + 16, y0 + 40 + 28 * i), _fit(d, f"{i + 1}. {a}", f, W - x0 - 64), font=f, fill=INK)
+            d.text((x0 + 20, y0 + 52 + 34 * i), _fit(d, f"{i + 1}. {a}", f, x1 - x0 - 40), font=f, fill=INK)
+        if self.bottlenecks:
+            names = "・".join(self.bottlenecks)
+            hit = "・".join(t for t in sorted(self.impact_dist, key=store._id_key))
+            line = f"ボトルネック {names}" + (f" → 遅れると {hit} に影響" if hit else "")
+            if self.qr_count:
+                line += f" ／ 品質チェックの指摘{self.qr_count}件を反映済み"
+            d.text((x0 + 20, y1 - 30), _fit(d, line, self.font(14), x1 - x0 - 40), font=self.font(14), fill=MUTED)
 
     # ---------- frames ----------
+
+    def revision_at(self, iso: str | None) -> int:
+        """Map revision in effect at a given time (from the revision history); latest if unknown."""
+        if not iso:
+            return self.m["revision"]
+        revs = [h["revision"] for h in self.m.get("history") or [] if h.get("updated_at") and h["updated_at"] <= iso]
+        return max(revs) if revs else min((h["revision"] for h in self.m.get("history") or []),
+                                          default=self.m["revision"])
 
     def frames(self, events: list[dict]) -> tuple[list[Image.Image], list[int]]:
         imgs: list[Image.Image] = []
@@ -320,46 +335,56 @@ class FlowRenderer:
         state: dict[str, dict] = {}
         flags = {"badge": False}
 
-        def frame(caption, sub, speaker=None, env=None, impact=None, panel=False, ms=100, phase=0, blink=False):
-            img, d = self.base(caption, sub)
+        def frame(caption, sub, speaker=None, env=None, impact=None, panel=False, ms=100, phase=0, blink=False,
+                  rev=None):
+            img, d = self.base(caption, sub, rev)
             self.bots(d, state, flags["badge"], speaker, phase, blink)
             if env:
                 self.envelope(d, *env)
-            self.taskmap(d, impact)
             if panel:
                 self.actions_panel(d)
+            else:
+                self.taskmap(d, impact)
+            # metadata for tests (not written to the GIF)
+            img.info["tamap"] = {"caption": caption, "state": {k: v["status"] for k, v in state.items()},
+                                 "rev": self.m["revision"] if rev is None else rev, "panel": panel,
+                                 "taskmap": not panel}
             imgs.append(img)
             durs.append(ms)
 
-        def hold(caption, sub, speaker=None, impact=None, panel=False, ms=1100):
-            frame(caption, sub, speaker, None, impact, panel, int(ms * 0.45), 0)
-            frame(caption, sub, speaker, None, impact, panel, int(ms * 0.4), 1)
-            frame(caption, sub, speaker, None, impact, panel, ms - int(ms * 0.45) - int(ms * 0.4), 0, True)
+        def hold(caption, sub, speaker=None, impact=None, panel=False, ms=1100, rev=None):
+            frame(caption, sub, speaker, None, impact, panel, int(ms * 0.45), 0, rev=rev)
+            frame(caption, sub, speaker, None, impact, panel, int(ms * 0.4), 1, rev=rev)
+            frame(caption, sub, speaker, None, impact, panel, ms - int(ms * 0.45) - int(ms * 0.4), 0, True, rev=rev)
 
-        hold("PMに話しかけると、3体の専門Botが順に分析します", "", ("pm", "TaMap チーム、出動します！"), ms=1400)
+        first_rev = self.revision_at(events[0].get("at")) if events else None
+        hold("PMに話しかけると、3体の専門Botが順に分析します", "", ("pm", "TaMap チーム、出動します！"), ms=1400,
+             rev=first_rev)
         for i, ev in enumerate(events):
             bot, st = ev["bot"], ev["status"]
-            if bot != "pm" and st == "working":
-                state["pm"] = {"status": "idle"}
+            rev = self.revision_at(ev.get("at"))
             name = store.BOT_NAMES[bot]
             note = f"：{ev['note']}" if ev.get("note") else ""
             caption = f"{name} {BOT_STATUS_JA[st]}{note}"
             sub = f"{hms(ev.get('at'))} JST ・ {i + 1}/{len(events)}"
             speaker = (bot, persona.line(bot, st, ev.get("say"), self.qr_count))
-            env = None
+            # The caption always matches what the cards show: while a request is travelling the receiver
+            # is not working yet (caption = the hand-off); a result travels after the sender is done.
             if bot == "pm" and st == "working" and i == 0:
-                env = ("user", "pm", REQUEST)
-            elif bot != "pm" and st == "working":
-                env = ("pm", bot, REQUEST)
-            elif bot != "pm" and st in ("done", "error"):
-                env = (bot, "pm", RESULT if st == "done" else ERR)
-            if env:
                 for k in range(1, 9):
-                    frame(caption, sub, None, (env[0], env[1], k / 9, env[2]))
+                    frame("ユーザー → TaMap PM に依頼", sub, None, ("user", "pm", k / 9, REQUEST), rev=rev)
+            elif bot != "pm" and st == "working":
+                state["pm"] = {"status": "idle"}
+                for k in range(1, 9):
+                    frame(f"TaMap PM → {name} に依頼", sub, None, ("pm", bot, k / 9, REQUEST), rev=rev)
+            elif bot != "pm" and st in ("done", "error"):
+                state[bot] = {"status": st}
+                for k in range(1, 9):
+                    frame(caption, sub, None, (bot, "pm", k / 9, RESULT if st == "done" else ERR), rev=rev)
             state[bot] = {"status": st}
-            hold(caption, sub, speaker)
             if bot == "quality_reviewer" and st == "done":
                 flags["badge"] = True
+            hold(caption, sub, speaker, rev=rev)
         if self.bottlenecks:
             names = "・".join(self.bottlenecks)
             ra = ("risk_analyst", f"{names}、あやしいかも…")

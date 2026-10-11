@@ -146,6 +146,60 @@ class StoreTest(unittest.TestCase):
         self.assertEqual([(e["bot"], e["status"]) for e in ev2 if e["bot"] != "pm"],
                          [("map_architect", "working"), ("map_architect", "done"), ("risk_analyst", "working")])
 
+    def test_flow_frames_caption_state_rev_panel(self):
+        import re
+
+        from datetime import datetime, timedelta
+        from unittest import mock
+
+        from tamap import animate
+        mid = self.m["map_id"]
+        clock = iter(datetime(2030, 1, 1, 9, 0, 0) + timedelta(seconds=i) for i in range(1000))
+        p = mock.patch.object(store, "now_iso", lambda: next(clock).isoformat() + "+09:00")
+        p.start()
+        self.addCleanup(p.stop)
+        store.set_bot_status(mid, "pm", "working", "受付")
+        store.set_bot_status(mid, "map_architect", "working", "分解中")
+        tasks = [dict(t, status="blocked") if t["id"] == "T4" else t for t in load("readme_example.json")]
+        store.update_map(mid, 1, tasks)  # rev 2 lands while MA works
+        store.set_bot_status(mid, "map_architect", "done", "T4をブロックに")
+        store.set_bot_status(mid, "pm", "working", "RAへ")
+        store.set_bot_status(mid, "risk_analyst", "working")
+        store.set_bot_status(mid, "risk_analyst", "done")
+        store.update_map(mid, 2, analysis={"pm": {"actions": ["a", "b", "c"]}})  # rev 3
+        store.set_bot_status(mid, "pm", "working", "QRへ")
+        store.set_bot_status(mid, "quality_reviewer", "working")
+        store.set_bot_status(mid, "quality_reviewer", "done")
+        m = store.set_bot_status(mid, "pm", "done", "最終提案")
+        r = animate.FlowRenderer(m)
+        imgs, _ = r.frames(animate.cycle_events(m["bot_history"]))
+        metas = [im.info["tamap"] for im in imgs]
+        names = {v: k for k, v in store.BOT_NAMES.items()}
+        checked = 0
+        for mt in metas:  # bug 4: caption "<Bot> <状態>" always matches that bot's card
+            g = re.match(r"^(TaMap PM|Map Architect|Risk Analyst|Quality Reviewer) (待機|作業中|完了|エラー)", mt["caption"])
+            if g:
+                self.assertEqual(animate.BOT_STATUS_JA[mt["state"].get(names[g[1]], "idle")], g[2], mt)
+                checked += 1
+            g = re.match(r"^TaMap PM → (.+) に依頼$", mt["caption"])
+            if g:
+                self.assertNotEqual(mt["state"].get(names[g[1]]), "working", mt)
+                self.assertEqual(mt["state"].get("pm"), "idle", mt)
+        self.assertGreater(checked, 20)
+        # every specialist is shown done by the end of the cycle
+        self.assertEqual({k: metas[-1]["state"].get(k) for k in ("map_architect", "risk_analyst", "quality_reviewer")},
+                         dict.fromkeys(("map_architect", "risk_analyst", "quality_reviewer"), "done"))
+        # bug 6: the header revision follows time (1 at intake, 2 after the update, 3 at the end)
+        revs = [mt["rev"] for mt in metas]
+        self.assertEqual(revs[0], 1)
+        self.assertEqual(sorted(set(revs)), [1, 2, 3])
+        self.assertEqual(revs, sorted(revs))
+        self.assertEqual(next(mt["rev"] for mt in metas if mt["caption"].startswith("Map Architect 完了")), 2)
+        # bug 7: the final actions panel replaces the task map instead of covering it
+        panels = [mt for mt in metas if mt["panel"]]
+        self.assertTrue(panels)
+        self.assertTrue(all(not mt["taskmap"] for mt in panels))
+
     def test_history_trim_keeps_whole_cycles(self):
         cyc = [{"bot": "pm", "status": "working"}, {"bot": "map_architect", "status": "working"},
                {"bot": "map_architect", "status": "done"}, {"bot": "pm", "status": "done"}]
