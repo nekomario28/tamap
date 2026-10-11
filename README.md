@@ -4,7 +4,7 @@
 
 TaMap（タマップ）は、**Grok Bot の AI チームがプロジェクトのタスクと依存関係を分析し、その結果をチャットの中のタスクマップ（mermaid）として更新し続ける**、会話型のプロジェクト支援システムです。
 
-ユーザーが話しかけるのは **TaMap PM（Grok Bot のメインBot）だけ** です。PM が 3 体の専門Bot（Map Architect／Risk Analyst／Quality Reviewer）に分析を頼み、TaMap の MCP ツールが返す mermaid 図と GIF を、そのままチャットに貼ります。**Web UI・公開URL・外部の画面はありません**。入力から結果、追加の質問までがチャットの中で完結します。
+ユーザーが話しかけるのは **TaMap PM（Grok Bot のメインBot）だけ** です。PM が 3 体の専門Bot（Map Architect／Risk Analyst／Quality Reviewer）に分析を頼み、TaMap の MCP ツールが返す mermaid 図と GIF を、そのままチャットに貼ります。入力から結果、追加の質問までがチャットの中で完結します。例外として、4 体のキャラがリアルタイムに動く **閲覧専用のライブページ**（box 内の `http://127.0.0.1:8765/live/{map_id}`）を別に用意しています（[docs/LIVE_VIEW.md](docs/LIVE_VIEW.md)）。書き込みや操作はできません。
 
 > **現在の状態：ハッカソン MVP。** TaMap Core と stdio MCP サーバーは実装済みで、テストで動作を確認しています。Grok Bot の 4 体の連携は、指示文の案（[docs/GROKBOT_INTEGRATION.md](docs/GROKBOT_INTEGRATION.md)）までです。何を確認したかは下の「検証チェックリスト」を見てください。
 
@@ -70,7 +70,7 @@ TaMap MCP サーバー（tamap/mcp_server.py, FastMCP）
 ### 設計原則
 
 - **入口は PM だけ**：ユーザーは PM に話しかけ、PM が専門Botの結果をまとめてツールに登録する。
-- **チャットの中で完結**：ツールは、チャットに貼る mermaid ブロックをそのまま返す。Web UI や公開URL は使わない。
+- **チャットの中で完結**：ツールは、チャットに貼る mermaid ブロックをそのまま返す。操作用の Web UI は持たない。ライブページは閲覧専用の例外で、チャットの流れには影響しない。
 - **決定的な検証はコード側**：ID の参照、循環の検出、到達できる後続タスクの計算などはプログラムで行う。LLM の説明で検証結果を上書きしない。
 - **状態の正本は共有ストア**：`data/maps/{map_id}.json` が正本。同じ `map_id` を使い、`revision`・更新時刻・情報源（source）を残す。古い revision での上書きは拒否する。
 - **送信済みメッセージは書き換えられない**：途中の状態は `set_bot_status` で記録だけしておき、最後に GIF 1 本で見せる（[docs/UX_DESIGN.md](docs/UX_DESIGN.md)）。
@@ -88,6 +88,7 @@ TaMap MCP サーバー（tamap/mcp_server.py, FastMCP）
 | `get_status(map_id)` | Bot の稼働図（mermaid）と直近の履歴 | 変わらない |
 | `render_flow_gif(map_id)` | 直近 1 周の流れを `out/{map_id}_flow.gif` に書き出し、そのパスを返す | 変わらない |
 | `render_team_card()` | 4 体のチーム紹介の GIF を `out/tamap_team.gif` に書き出す（挨拶に添付） | - |
+| `get_live_url(map_id)` | 閲覧専用のライブページの URL と、ライブページのサーバーが起動しているかを返す（`create_map` の structuredContent にも `live_url`） | 変わらない |
 
 `update_map` が返すチャット用テキストの例：
 
@@ -107,6 +108,7 @@ revision 3 ・ map_id `JbeSRnxW` ・ 更新 13:58:10 JST ・ 検証OK
 ```bash
 uv sync                       # .venv を作る（mcp, pillow）
 scripts/mcp_server.sh         # stdio MCP サーバー（Grok Bot に登録するコマンド）
+scripts/live_view.sh          # 閲覧専用のライブページ（任意。127.0.0.1:8765、tmux などで常駐）
 ```
 
 - データの置き場所：`data/maps/`（`TAMAP_DATA_DIR` で変更可）。GIF の出力先：`out/`（`TAMAP_OUT_DIR` で変更可）。
@@ -158,12 +160,13 @@ uv run python tests/e2e_mcp.py              # stdio MCP サーバーを公式ク
 - [x] MCP ツールの戻り値から map_id と最新の図（mermaid）を取得できる（e2e。Grok Bot から MCP として呼べるかは未確認）
 - [x] 追加の更新で、**同じ map_id** の revision と図が更新され、差分の 1 行が付く。古い revision からの更新は拒否される（e2e）
 - [x] Bot の状態を記録すると、作業中のBotだけが光る（専門Botが作業中なら PM は待機）。その流れを GIF に書き出せる。4 体のキャラクター（ドット絵・ふきだし・チーム紹介）も含む（unittest・e2e。GIF は開発用 VM で生成して目視）
+- [x] ライブページは読み取り専用（書き込みメソッドは 405、ファイルは変わらない）。`set_bot_status` の後、SSE で 1 秒以内に反映される（unittest・e2e・headless Chrome。Grok Bot の box では未確認）
 - [ ] 書き込みの認証：stdio MCP サーバーを起動できる人（＝ box にアクセスできる人）だけが書ける、という境界しかない。トークンによる認証は無い
 - [ ] 90 秒以内に一連の流れを実演できる（未リハーサル）
 
 ## 開発方針と非目標
 
-この MVP では、**Web UI、公開URL、GitHub 連携、Issue/PR の自動割り当て・実装・マージ、日数の計算、常時無停止の自律実行、外部 DB の本格運用** は扱いません。必要になったら後から追加します。
+この MVP では、**操作用の Web UI、外部への公開（ライブページの外部公開は未確認。docs/LIVE_VIEW.md）、GitHub 連携、Issue/PR の自動割り当て・実装・マージ、日数の計算、常時無停止の自律実行、外部 DB の本格運用** は扱いません。必要になったら後から追加します。
 
 実装と検証が終わった機能だけを「動作済み」と書き、終わっていないものは未完了と明記します。
 
