@@ -1,111 +1,121 @@
-# TaMap 🗺️
+# TaMap
 
 **タスクをつなぎ、未来を描く。**
 
-TaMap（タマップ）は、**Grok Bot の AI チームがプロジェクトのタスクと依存関係を分析し、その結果をチャットの中のタスクマップ（mermaid）として更新し続ける**、会話型のプロジェクト支援システムです。
+TaMap（タマップ）は、Grok Bot の 4 体がプロジェクトのタスクと依存関係を分析し、その結果をチャットのタスクマップ（mermaid）として更新し続ける会話型の支援システムです。
 
-ユーザーが話しかけるのは **TaMap PM（Grok Bot のメインBot）だけ** です。PM が 3 体の専門Bot（Map Architect／Risk Analyst／Quality Reviewer）に分析を頼み、TaMap の MCP ツールが返す mermaid 図と GIF を、そのままチャットに貼ります。入力から結果、追加の質問までがチャットの中で完結します。例外として、4 体のキャラがリアルタイムに動く **閲覧専用のライブページ**（box 内の `http://127.0.0.1:8765/live/{map_id}`）を別に用意しています（[docs/LIVE_VIEW.md](docs/LIVE_VIEW.md)）。書き込みや操作はできません。
+話しかける相手は **TaMap PM**（Grok Bot のメインBot）だけです。PM が Map Architect、Risk Analyst、Quality Reviewer に分析を頼み、MCP ツールが返す mermaid と GIF をチャットに貼ります。状態の正本は `data/maps/{map_id}.json` で、中身が変わったときだけ同じ `map_id` の `revision` が 1 つ上がります。
 
-> **現在の状態：ハッカソン MVP。** TaMap Core と stdio MCP サーバーは実装済みで、テストで動作を確認しています。Grok Bot の 4 体の連携は、指示文の案（[docs/GROKBOT_INTEGRATION.md](docs/GROKBOT_INTEGRATION.md)）までです。何を確認したかは下の「検証チェックリスト」を見てください。
+4 体のドット絵が記録に合わせて動く閲覧専用ページは、`http://127.0.0.1:8765/live/{map_id}` です（[docs/LIVE_VIEW.md](docs/LIVE_VIEW.md)）。
 
-## 名前の由来
+> **2026-10-11 JST 時点。** Grok Bot 上で、stdio MCP の呼び出し、4 体の一周、チャットの mermaid と GIF、box 内のライブページまで動作を確認しています。ライブページの外部公開と、90 秒デモのリハーサルはまだです。
 
-**TaMap = Task-aware Multi-Agent Planning**
+## 名前
 
-- **Task-aware**：タスクと依存関係、進捗状況を理解する
-- **Multi-Agent**：専門性の異なる複数のBotが協力する
-- **Planning**：根拠に基づき次の行動を計画する
+**TaMap = Task-aware Multi-Agent Planning。** タスクと依存・進捗を理解し、役割の違う Bot が協力し、根拠のある次の行動を出します。「Task + Map（タスクの地図）」でもあります。
 
-「**Task + Map**（タスクの地図）」の意味も込めています。
+## 4 体のキャラクター
 
-## 解決したい課題
+見た目と口調の正本は `tamap/persona.py` です。GIF、稼働図、Bot の指示文はここに合わせます。体は共通の丸いロボットで、色とモチーフで見分けます。
 
-タスク一覧だけでは、何が終わらないと次に進めないか、遅延がどこに波及するか、今何を優先すべきかが分かりづらくなります。また、会話の中だけで分析すると、更新前後の状態やBotの判断根拠を追いづらくなります。
+| Bot | 役割 | 見た目 | 口調の例 |
+| --- | --- | --- | --- |
+| 📋 **TaMap PM** | まとめ役。対話、依頼、MCP の呼び出し、結果の投稿 | 藍色。旗つきアンテナとヘッドセット | 「まかせてください！」 |
+| 🗺️ **Map Architect** | 地図職人。タスクと依存関係への分解 | 青緑。黄色いヘルメットと巻いた地図 | 「地図、できたっす！」 |
+| ⚠️ **Risk Analyst** | 心配性の探偵。遅延の起点と対処案 | 琥珀色。虫めがねと「！」のアンテナ | 「ここ、あやしいかも…」 |
+| ✅ **Quality Reviewer** | 赤ペン先生。断定しすぎ・根拠の弱さ・計算との食い違いを、直す前→直した後で返す | ピンク。赤ペンとチェックのバッジ | 「ちょっとだけ直すね」 |
 
-TaMap は **会話による分析** と、**同じ map_id で revision を上げていく共有状態** を組み合わせて、この課題を解決します。
+口調を使うのはふきだし・挨拶・レビュー見出しの 1 行です。結論、3 アクション、推定・未確認は、事実が分かる普通の文で書きます。
 
-## AIチーム構成
-
-| Bot | 役割 | 主な出力 |
-| --- | --- | --- |
-| **TaMap PM（Grok Bot のメインBot）** | ユーザーとの対話、専門Botへの依頼、結果の統合、MCPツールの呼び出し | 結論・タスクマップ・次の3アクション・ボタン |
-| **Map Architect** | タスク分解と依存関係の整理 | タスク・依存関係の構造化データ |
-| **Risk Analyst** | ボトルネックと遅延の波及を分析 | 影響の起点・対処案 |
-| **Quality Reviewer** | 根拠・断定しすぎ・矛盾を確認 | 「直す前→直した後」の指摘 |
-
-TaMap PM はメインBotそのものです。メインBotとPMを別々のBotとして置くことはしません。
-
-## 主な機能
-
-1. **Task Mapping**：タスクと依存関係を mermaid のタスクマップで表示する（状態の色、合流点、ボトルネック、クリティカルパス候補）。
-2. **Bottleneck Analysis**：後続タスクへの影響が大きいタスクを、コードで計算する。
-3. **What-if Simulation**：「T4 が遅れたら？」に対して、到達できる後続タスクを黄色で示す（保存はしない）。
-4. **Action Planning**：PM が次の行動を最大 3 件提案する（ツール側でも 4 件以上は受け付けない）。
-5. **Quality Check**：重複ID、存在しない参照、自己依存、循環、不正な状態をコードで検出し、図の中で赤く示す。Quality Reviewer の指摘は「直す前→直した後」の形で保存する。
-6. **revision と差分**：更新は同じ `map_id` の `revision` を 1 つ上げる。古い revision からの更新は拒否する。更新すると、変更点・ボトルネック・影響先の差分が 1 行で返る。
-7. **流れのGIF**：Bot の状態の履歴（`bot_history`）から、PM→Map Architect→Risk Analyst→Quality Reviewer→PM の 1 周をレトロなドット絵の GIF にする。
-8. **キャラクター**：4 体はそれぞれ色・モチーフ・口調を持つキャラクター（📋まとめ役／🗺️地図職人／⚠️心配性の探偵／✅赤ペン先生）。GIF のふきだし、チーム紹介の GIF、稼働図の顔文字に出る（`tamap/persona.py`、詳細は docs/GROKBOT_INTEGRATION.md 3.5 章）。
-
-入力されていない数値（所要日数など）は計算しません。推定と未確認の事項は、そう分かるように書きます。
-
-## アーキテクチャ
+## しくみ
 
 ```text
 ユーザー
-   │ チャット（Markdown / mermaid / GIF / 質問ボタン）
-   ▼
-TaMap PM（Grok Bot のメインBot）
-   ├── 🗺️ Map Architect   ─┐
-   ├── ⚠️ Risk Analyst      ├── 分析結果（teammate メッセージ）
-   └── ✅ Quality Reviewer ─┘
-   │ MCP ツール呼び出し（stdio）
-   ▼
-TaMap MCP サーバー（scripts/mcp_server.sh → tamap/mcp_server.py, FastMCP）
-│  ツール：create_map / update_map / get_map / simulate_delay / list_maps /
-│          set_bot_status / get_status / render_flow_gif / render_team_card /
-│          get_live_url / parse_handoff
-│  （MCP を登録できないときは scripts/tamap_cli.sh で同じツールをシェルから呼ぶ）
-   ├── TaMap Core（tamap/core.py）  検証・影響計算・ボトルネック（LLM 不使用）
-   ├── 共有ストア（tamap/store.py） data/maps/{map_id}.json（revision・履歴・Bot状態）  ← 書き込むのはここだけ
-   ├── mermaid 生成（tamap/render.py）
-   ├── キャラクター（tamap/persona.py 設定・口調、tamap/sprites.py ドット絵）
-   └── GIF 生成（tamap/animate.py）
-         ├── render_flow_gif  → out/{map_id}_flow.gif
-         └── render_team_card → out/tamap_team.gif
+  │ チャット（Markdown / mermaid / GIF / 質問ボタン 最大6）
+  ▼
+TaMap PM                         Grok Bot のメインBot。create_map / update_map はここだけ
+  │ teammate。日本語の依頼文 + ```json フェンス 1 つ（メッセージ全体は JSON にしない）
+  ├── 🗺️ Map Architect          tasks
+  ├── ⚠️ Risk Analyst            起点 ID と対処案
+  └── ✅ Quality Reviewer        before / text / reason
+  │ stdio MCP（登録できないときは scripts/tamap_cli.sh）
+  ▼
+scripts/mcp_server.sh  →  python -m tamap.mcp_server
+  FastMCP。実装上の名前は tamap。Grok Bot に登録したコネクタ名は tamap-v2
+  ├── tamap/core.py       検証、遅延の到達先、合流点、ボトルネック、クリティカルパス候補
+  ├── tamap/store.py      data/maps/{map_id}.json（置き換えない .lock で fcntl 排他ロックし、一時ファイルを os.replace）
+  ├── tamap/handoff.py    専門Botの返信から JSON を 1 つ読む（ツール parse_handoff）
+  ├── tamap/render.py     チャットに貼る mermaid
+  ├── tamap/persona.py    役割・色・口調
+  ├── tamap/sprites.py    16×14 のドット絵
+  └── tamap/animate.py    out/{map_id}_flow.gif と out/tamap_team.gif
 
-閲覧専用ライブページ（チャット内完結の例外・任意）
-   scripts/live_view.sh → tamap/live.py（標準ライブラリの http.server）
-   ├── data/maps/{map_id}.json を読むだけ（0.2 秒ごとに監視。書き込みなし、GET/HEAD 以外は 405）
-   ├── SSE（/events/{map_id}）で Bot の状態・bot_history・say・タスクマップを送る
-   ├── ドット絵と配置は sprites.py / persona.py / animate.py を共有（GIF と同じ見た目を canvas に描く）
-   └── ブラウザ（box の中）→ http://127.0.0.1:8765/live/{map_id}   ※ URL は get_live_url で取れる
+scripts/live_view.sh  →  python -m tamap.live     標準ライブラリの http.server + SSE
+  http://127.0.0.1:8765/live/{map_id}
+  data/maps を 0.2 秒ごとに見るだけ。GET / HEAD 以外は 405。描画は sprites / persona / animate と共通
 ```
 
-### 設計原則
+- 入口は PM です。専門Botは PM への返信だけを返します。
+- ID の参照、循環、到達できる後続、ボトルネックは `tamap/core.py` が計算します。所要日数が未入力のときは、到達できる後続だけを返します。
+- 正本は `data/maps/{map_id}.json` です。読み取りから書き込みまでは、置き換えない `.lock` の排他ロックの中で行います。`expected_revision` が現在と違う更新は `revision_conflict` で拒否します。正規化のあとで tasks / analysis / title が同じ `update_map` は、ファイルを書き換えず revision を維持します。
+- 送ったチャットは書き換えられないので、途中の状態は `set_bot_status` に残し、結果の投稿で流れの GIF を 1 本添付します（[docs/UX_DESIGN.md](docs/UX_DESIGN.md)）。
 
-- **入口は PM だけ**：ユーザーは PM に話しかけ、PM が専門Botの結果をまとめてツールに登録する。
-- **チャットの中で完結**：ツールは、チャットに貼る mermaid ブロックをそのまま返す。操作用の Web UI は持たない。ライブページは閲覧専用の例外で、チャットの流れには影響しない。
-- **決定的な検証はコード側**：ID の参照、循環の検出、到達できる後続タスクの計算などはプログラムで行う。LLM の説明で検証結果を上書きしない。
-- **状態の正本は共有ストア**：`data/maps/{map_id}.json` が正本。同じ `map_id` を使い、`revision`・更新時刻・情報源（source）を残す。古い revision での上書きは拒否する。
-- **送信済みメッセージは書き換えられない**：途中の状態は `set_bot_status` で記録だけしておき、最後に GIF 1 本で見せる（[docs/UX_DESIGN.md](docs/UX_DESIGN.md)）。
+タスクマップの見方: 完了は緑、進行中は青、未着手は灰、ブロック中は橙、検証エラーは赤、遅延の影響は黄。◆は合流点、▲はボトルネック（破線の太枠）、クリティカルパス候補は太線（`==>`）。存在しない参照と循環は赤の破線です。
+
+## クイックスタート（Grok Bot の box）
+
+指示文が参照する配置は `/workspace/tamap` です。別のディレクトリに clone したときは、指示文のパスをその場所に読み替えます。
+
+```bash
+cd /workspace/tamap
+uv sync                          # .venv（mcp, pillow）
+```
+
+1. **MCP を登録する。** コマンドは `/workspace/tamap/scripts/mcp_server.sh`、トランスポートは stdio。動作確認したコネクタ名は `tamap-v2`。コードの `list_tools` は 11 個で、`parse_handoff` も含みます。
+2. **ライブページ（任意）。** `scripts/live_view.sh` を tmux などで常駐させる。既定は `127.0.0.1:8765`。URL は `get_live_url`。`TAMAP_LIVE_TOKEN` を置くと `?token=` が必要になる。
+3. **Bot を 4 体作る。** 指示文は [docs/GROKBOT_INTEGRATION.md](docs/GROKBOT_INTEGRATION.md) から、それぞれの Bot に入れる。
+   - 5.1 TaMap PM（メインBot。ユーザーはここにだけ話す）
+   - 5.2 Map Architect
+   - 5.3 Risk Analyst
+   - 5.4 Quality Reviewer
+4. **サンプルを渡す。** PM に `samples/readme_example.json` のタスクを送る。ボタンの文は「サンプル（タスク管理アプリ T1〜T7）で試す」。
+
+MCP を登録できないときは、同じ関数をシェルから呼びます。標準出力がチャット用テキスト、標準エラー出力が structuredContent、ツールのエラーは終了コード 1 です。ツール名の許可リストはサーバーの `list_tools` から作ります。
+
+```bash
+scripts/tamap_cli.sh list_maps
+scripts/tamap_cli.sh simulate_delay '{"map_id":"…","task_id":"T4"}'
+scripts/tamap_cli.sh create_map < /tmp/tamap_args.json
+```
+
+| 変数 | 既定 | 用途 |
+| --- | --- | --- |
+| `TAMAP_DATA_DIR` | `data/maps` | マップ JSON |
+| `TAMAP_OUT_DIR` | `out` | GIF |
+| `TAMAP_FONT` | 自動（Noto Sans CJK / IPA / WenQuanYi） | GIF の日本語 |
+| `TAMAP_LIVE_HOST` / `TAMAP_LIVE_PORT` | `127.0.0.1` / `8765` | ライブページ |
+| `TAMAP_LIVE_BASE_URL` | 上記から組み立て | URL の先頭（公開したとき） |
+| `TAMAP_LIVE_TOKEN` | なし | ライブページの `?token=` |
 
 ## MCP ツール
 
+`python -m tamap.mcp_server` の `list_tools` は次の 11 個です（`parse_handoff` を含む）。`tests/e2e_mcp.py` がこの集合を確認します。`scripts/tamap_cli.sh` の許可リストも同じ一覧です。
+
 | ツール | 内容 | revision |
 | --- | --- | --- |
-| `create_map(title, tasks, analysis?, source?)` | 新規作成。検証エラーがあっても保存し、図の中で赤く示す | 1 |
-| `update_map(map_id, expected_revision, tasks?, analysis?, source?, title?)` | tasks / analysis / title は全体を置き換える。正規化後に同じなら revision は上げず、「変更なし（revision N のまま）」と `unchanged: true` を返す。変わったときだけ差分の 1 行と `diff` を返す。古い revision は、中身が同じでも `revision_conflict` で拒否 | 変わったときだけ +1 |
-| `get_map(map_id)` | 現在の図。structuredContent に tasks と analysis | 変わらない |
-| `simulate_delay(map_id, task_id)` | What-if。遅延元を太枠、影響を受けるタスクとエッジを黄色で示す。保存しない | 変わらない |
-| `list_maps()` | map_id の一覧 | - |
-| `set_bot_status(map_id, bot, status, note?, say?)` | Bot の状態を記録する。専門Botが `working` になると、PM は自動で `idle`（「〜の結果待ち」）になる。`say` はそのBotの口調の一言（GIF のふきだし）。ツール一覧に `say` が無いときは、`note` に `｜ say:一言` または `{"note","say"}` と書く | 変わらない |
-| `parse_handoff(text, bot?, role?)` | 専門Botの返信を毎回これに渡す（自分ではパースしない）。前置き、json のコードフェンス、末尾カンマ、スマートクォートを除いて JSON を1つ取り出す。`bot`（`role` でも同じ）を付けると必要な項目を検査する。オブジェクトは structuredContent の `data` | - |
-| `get_status(map_id)` | Bot の稼働図（mermaid）と直近の履歴 | 変わらない |
-| `render_flow_gif(map_id)` | 直近 1 周の流れを `out/{map_id}_flow.gif` に書き出し、そのパスを返す | 変わらない |
-| `render_team_card()` | 4 体のチーム紹介の GIF を `out/tamap_team.gif` に書き出す（挨拶に添付） | - |
-| `get_live_url(map_id)` | 閲覧専用のライブページの URL と、ライブページのサーバーが起動しているかを返す（`create_map` の structuredContent にも `live_url`） | 変わらない |
+| `create_map(title, tasks, analysis?, source?)` | 新規作成。検証エラーがあっても保存し、図の中で赤く示す。structuredContent に `live_url` | 1 |
+| `update_map(map_id, expected_revision, tasks?, analysis?, source?, title?)` | tasks / analysis / title を全体置換。正規化後に同じなら「変更なし（revision N のまま）」、`unchanged: true`。変わったときだけ差分の 1 行と `diff`。`expected_revision` が違うときは、中身が同じでも `revision_conflict` | 変わったときだけ +1 |
+| `get_map(map_id)` | 現在の図。structuredContent に tasks と analysis | 不変 |
+| `simulate_delay(map_id, task_id)` | What-if。遅延元を太枠、影響を受けるタスクとエッジを黄で示す。保存しない | 不変 |
+| `list_maps()` | map_id の一覧 | — |
+| `set_bot_status(map_id, bot, status, note?, say?)` | 稼働図を返す。bot は `pm` / `map_architect` / `risk_analyst` / `quality_reviewer`、status は `idle` / `working` / `done` / `error`。専門Botが `working` になると PM は自動で `idle`（「〜の結果待ち」）。作業中・完了・エラーのノードには `say`（無ければ口ぐせ）。`say` は 30 文字まで。引数が無い接続では `note` の `｜ say:一言` または `{"note","say"}` | 不変 |
+| `parse_handoff(text, bot?, role?)` | MCP ツール。専門Botの返信を毎回これに渡す（自分ではパースしない）。前置き、json フェンス、末尾カンマ、スマートクォートを除いて JSON を 1 つ取る。`bot`（`role` でも同じ）は `map_architect` / `risk_analyst` / `quality_reviewer`。成功時は `structuredContent.data`。この 1 行はユーザーには貼らない | — |
+| `get_status(map_id)` | 稼働図（ユーザー → PM → 3 体 → PM）と直近の履歴。作業中・完了・エラーは `say`（無ければ口ぐせ） | 不変 |
+| `render_flow_gif(map_id)` | 直近 1 周を `out/{map_id}_flow.gif` に書き、パスを返す | 不変 |
+| `get_live_url(map_id)` | ライブページの URL と、サーバーが起動しているか（`running`） | 不変 |
+| `render_team_card()` | チーム紹介の `out/tamap_team.gif`。PM の最初の挨拶に添付する | — |
 
-`update_map` が返すチャット用テキストの例：
+`update_map` がチャット用に返すテキストの形:
 
 ````text
 変更点：T3 進行中→完了 ／ ボトルネック：変化なし（T4） ／ 影響先：変化なし（T6・T7）
@@ -113,79 +123,82 @@ TaMap MCP サーバー（scripts/mcp_server.sh → tamap/mcp_server.py, FastMCP�
 ```mermaid
 graph LR …
 ```
-revision 3 ・ map_id `JbeSRnxW` ・ 更新 13:58:10 JST ・ 検証OK
+revision 3 ・ map_id `…` ・ 更新 13:58:10 JST ・ 検証OK
 ````
 
-各ツールが実際に返したテキストは [docs/sample_output.md](docs/sample_output.md) にあります（e2e テストで自動生成）。
+各ツールの実戻り値は [docs/sample_output.md](docs/sample_output.md) にあります。
 
-## セットアップ
+## チャットでの流れ
 
-```bash
-uv sync                       # .venv を作る（mcp, pillow）
-scripts/mcp_server.sh         # stdio MCP サーバー（Grok Bot に登録するコマンド）
-scripts/live_view.sh          # 閲覧専用のライブページ（任意。127.0.0.1:8765、tmux などで常駐）
-```
+詳しい文面は [docs/UX_DESIGN.md](docs/UX_DESIGN.md) です。
 
-- データの置き場所：`data/maps/`（`TAMAP_DATA_DIR` で変更可）。GIF の出力先：`out/`（`TAMAP_OUT_DIR` で変更可）。
-- GIF の日本語は、Noto Sans CJK・IPA・WenQuanYi などのフォントを自動で探して使います。見つからないときは `TAMAP_FONT` にフォントファイルのパスを指定してください。
-- Grok Bot への組み込み方（MCP 登録、専門Botの役割分担、指示文の案）は [docs/GROKBOT_INTEGRATION.md](docs/GROKBOT_INTEGRATION.md) を見てください。
+- 1 回の分析で PM の投稿は 2 つです。開始の 1 行（担当の順）と、結果の 1 通。途中の稼働図は投稿しません。
+- 結果の順は、結論、（あれば）矛盾・検証エラー、タスクマップ（ツールの mermaid をそのまま）、次の 3 アクション、レビューで直した点（直す前→直した後。0 件なら「指摘なし」）、推定・未確認、流れの GIF、質問ボタンです。
+- 「T4が遅れたら？」は `simulate_delay` だけです。保存しないので revision は変わりません。
+- 「T3を完了にする」は `update_map` だけです。中身が変わったときだけ revision が上がり、差分の 1 行が付きます。`unchanged: true` のときは「rev N → N+1」と書きません。
+- ボタンの文は、押すとそのままユーザーの発言になります。チーム全体の再分析は「チームで再分析」のときだけです。
+- 開始の案内文は「約 1 分半」です。README サンプルの実測は下の動作確認のとおり、約 61〜80 秒でした。
 
-## 使用イメージ
+## サンプル
 
-1. ユーザーが PM にタスクの一覧を送る（または［サンプル（タスク管理アプリ T1〜T7）で試す］を押す）。
-2. PM が開始の 1 行を投稿し、Map Architect → Risk Analyst → Quality Reviewer の順に依頼する。そのたびに `set_bot_status` で記録する。
-3. PM が `create_map`／`update_map` を呼び、結果を 1 通で投稿する：結論、タスクマップ（mermaid と revision の行）、次の 3 アクション、レビューで直した点、推定・未確認、GIF、質問ボタン。
-4. ユーザーが［T4が遅れたら？］を押すと、PM が `simulate_delay` を 1 回呼んで黄色の影響図を返す（revision は変わらない）。
-5. ユーザーが［T3を完了にする］を押すと、PM が `update_map` を呼び、同じ `map_id` の revision が上がる。差分の 1 行が付く。
-
-詳しいメッセージの文面とデモの台本は [docs/UX_DESIGN.md](docs/UX_DESIGN.md) にあります。
-
-### 入力例
-
-**プロジェクト：タスク管理アプリ開発**（`samples/readme_example.json`）
+`samples/readme_example.json`（タスク管理アプリ）:
 
 - T1 要件整理：完了、依存なし
-- T2 UI設計：完了、T1に依存
-- T3 DB設計：進行中、T1に依存
-- T4 API実装：未着手、T3に依存
-- T5 画面実装：進行中、T2に依存
-- T6 統合テスト：未着手、T4とT5に依存
-- T7 リリース：未着手、T6に依存
+- T2 UI設計：完了、T1 に依存
+- T3 DB設計：進行中、T1 に依存
+- T4 API実装：未着手、T3 に依存
+- T5 画面実装：進行中、T2 に依存
+- T6 統合テスト：未着手、T4 と T5 に依存
+- T7 リリース：未着手、T6 に依存
 
-**質問：** 依存関係とボトルネックを整理し、T4が遅延した場合の影響範囲と、次に取るべき3つのアクションを教えてください。
+`tamap/core.py` の計算（テストで確認）: 合流点は T6。T4 が遅れると影響するのは T6・T7。クリティカルパス候補は T1→T3→T4→T6→T7。ボトルネック候補は T3。所要時間は未入力なので、これは未完了タスクを重み 1 とした最長チェーンです。
 
-この入力に対する TaMap Core の計算結果（テストで確認済み）：合流点は T6、T4 が遅れると影響するのは T6・T7、クリティカルパス候補は T1→T3→T4→T6→T7、ボトルネック候補は T3。わざと不整合を入れたサンプル（`samples/broken_example.json`）では、重複ID・存在しない参照（T9）・T6⇄T7 の循環を検出します。
+`samples/broken_example.json` は、重複 ID、存在しない参照（T9）、T6⇄T7 の循環を検出します。循環があるときはクリティカルパスを計算しません。
+
+## 動作確認
+
+### 動作確認済み（2026-10-11 JST、Grok Bot）
+
+- [x] チャットが mermaid（classDef、linkStyle、破線・太線、`<br>`）を描画し、GIF 添付を再生する
+- [x] stdio MCP を登録して呼び出せた（コネクタ名 `tamap-v2`）。`scripts/tamap_cli.sh` も代替として動いた
+- [x] 4 体（TaMap PM、Map Architect、Risk Analyst、Quality Reviewer）が README サンプルで一周を完走した。1 回目 約 80 秒、2 回目 約 61 秒（専門Botは各 約 13〜15 秒）。タイムアウトも revision の競合もなし。`say` は 8/8 渡った。中身が同じ更新は revision を維持した。流れの GIF（約 24〜26 秒）を生成した
+- [x] 閲覧専用ライブページ（`http://127.0.0.1:8765/live/{map_id}`）が、Bot の状態記録に合わせて box のブラウザでリアルタイムに更新された
+
+### 動作確認済み（テスト）
+
+- [x] 重複 ID、存在しない参照、自己依存、循環、不正な状態を検出する（`tests/test_core.py`）
+- [x] 遅延したタスクから到達できる後続を計算する。README 例は T4 → T6・T7
+- [x] Quality Reviewer の指摘（before / text / reason）をマップに保存する
+- [x] 同じ `map_id` で、変わった更新だけ revision が上がり、差分の 1 行が付く。古い revision は拒否する。中身が同じ更新は revision を維持する
+- [x] 専門Botが作業中になると PM が自動で待機になる。流れの GIF とチーム紹介の GIF を書き出せる
+- [x] ライブページは GET / HEAD だけを受け、それ以外は 405 で、マップのファイルは変わらない
+
+### 未確認
+
+- [ ] ライブページの外部公開（候補は [docs/LIVE_VIEW.md](docs/LIVE_VIEW.md)。いずれも未実施）
+- [ ] 90 秒デモのリハーサル（台本は [docs/UX_DESIGN.md](docs/UX_DESIGN.md) の 7 章）
+- [ ] 書き込みの認証。今の境界は、stdio MCP を起動できる人（box に入れる人）が書けること。`TAMAP_LIVE_TOKEN` はライブページの閲覧用
+- [ ] 稼働図の絵文字と顔文字が、Grok Bot の mermaid で崩れずに出るか（classDef 等は確認済み）
+- [ ] routine からの再評価。GitHub の Issue / PR をマップの入力にすること
+
+指示文とつなぎ方の詳細は [docs/GROKBOT_INTEGRATION.md](docs/GROKBOT_INTEGRATION.md)、実装時の確認メモは [docs/IMPLEMENTATION_NOTES.md](docs/IMPLEMENTATION_NOTES.md) です。実機で確認できた範囲は、この「動作確認」が 2026-10-11 時点の結果です。
+
+## ロードマップ
+
+- ライブページを box の外から開く。サーバーは 127.0.0.1 のまま、トンネルで転送し、`TAMAP_LIVE_TOKEN` を必須にする
+- [90 秒デモ](docs/UX_DESIGN.md) を台本どおり通す（本番で回すのは What-if と状態変更。一周は事前に済ませる）
+- PM の routine で、ブロック中のタスクがあり、最終更新から時間がたっているマップだけ、1 行とボタンを出す。routine から `update_map` は呼ばない
+- GitHub の Issue / PR をタスクとして取り込む。コードを書いて PR を出す Bot は、分析の 4 体とは別にする
+- 工数・期限が入力されたときの、遅延日数の計算
 
 ## テスト
 
 ```bash
-uv run python -m unittest tests.test_core tests.test_handoff   # Core・ストア・ハンドオフ・GIF・ライブページ
-uv run python tests/e2e_mcp.py              # stdio MCP サーバーを公式クライアントで起動し、全ツールを呼ぶ（ライブページ・CLI も含む）
-# 任意：ライブページを headless Chrome で開いてスクリーンショットを撮る（Chrome と puppeteer-core が必要。docs/LIVE_VIEW.md）
+uv run python -m unittest tests.test_core tests.test_handoff
+uv run python tests/e2e_mcp.py
+# 任意。Chrome と puppeteer-core が必要（docs/LIVE_VIEW.md）
 # node tests/live_browser.js <base_url> <data_dir> <map_id> <out_dir>
 ```
-
-## 検証チェックリスト
-
-チェックを付けたのは、テストを実際に実行して確認した項目だけです。
-
-- [ ] PM と 3 体の専門Botが、役割に沿って結果を引き継ぐ（Grok Bot 上では未確認。指示文の案は docs/GROKBOT_INTEGRATION.md）
-- [x] タスクIDの不整合・存在しない参照・循環が検出される（unittest・e2e）
-- [x] 遅延したタスクから到達できる後続タスクが正しく計算される（unittest・e2e）
-- [x] Quality Reviewer の指摘が「直す前→直した後」の形でマップに保存される（e2e）
-- [ ] Quality Reviewer の指摘が PM の最終回答に反映される（Grok Bot 上では未確認）
-- [x] MCP ツールの戻り値から map_id と最新の図（mermaid）を取得できる（e2e。Grok Bot から MCP として呼べるかは未確認）
-- [x] 追加の更新で、**同じ map_id** の revision と図が更新され、差分の 1 行が付く。古い revision からの更新は拒否される（e2e）
-- [x] Bot の状態を記録すると、作業中のBotだけが光る（専門Botが作業中なら PM は待機）。その流れを GIF に書き出せる。4 体のキャラクター（ドット絵・ふきだし・チーム紹介）も含む（unittest・e2e。GIF は開発用 VM で生成して目視）
-- [x] ライブページは読み取り専用（書き込みメソッドは 405、ファイルは変わらない）。`set_bot_status` の後、SSE で 1 秒以内に反映される（unittest・e2e・headless Chrome。Grok Bot の box では未確認）
-- [ ] 書き込みの認証：stdio MCP サーバーを起動できる人（＝ box にアクセスできる人）だけが書ける、という境界しかない。トークンによる認証は無い
-- [ ] 90 秒以内に一連の流れを実演できる（未リハーサル）
-
-## 開発方針と非目標
-
-この MVP では、**操作用の Web UI、外部への公開（ライブページの外部公開は未確認。docs/LIVE_VIEW.md）、GitHub 連携、Issue/PR の自動割り当て・実装・マージ、日数の計算、常時無停止の自律実行、外部 DB の本格運用** は扱いません。必要になったら後から追加します。
-
-実装と検証が終わった機能だけを「動作済み」と書き、終わっていないものは未完了と明記します。
 
 ---
 
