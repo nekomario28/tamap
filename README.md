@@ -62,7 +62,8 @@ TaMap PM（Grok Bot のメインBot）
    ▼
 TaMap MCP サーバー（scripts/mcp_server.sh → tamap/mcp_server.py, FastMCP）
 │  ツール：create_map / update_map / get_map / simulate_delay / list_maps /
-│          set_bot_status / get_status / render_flow_gif / render_team_card / get_live_url
+│          set_bot_status / get_status / render_flow_gif / render_team_card /
+│          get_live_url / parse_handoff
 │  （MCP を登録できないときは scripts/tamap_cli.sh で同じツールをシェルから呼ぶ）
    ├── TaMap Core（tamap/core.py）  検証・影響計算・ボトルネック（LLM 不使用）
    ├── 共有ストア（tamap/store.py） data/maps/{map_id}.json（revision・履歴・Bot状態）  ← 書き込むのはここだけ
@@ -93,11 +94,12 @@ TaMap MCP サーバー（scripts/mcp_server.sh → tamap/mcp_server.py, FastMCP�
 | ツール | 内容 | revision |
 | --- | --- | --- |
 | `create_map(title, tasks, analysis?, source?)` | 新規作成。検証エラーがあっても保存し、図の中で赤く示す | 1 |
-| `update_map(map_id, expected_revision, tasks?, analysis?, source?, title?)` | tasks / analysis は全体を置き換える。差分の 1 行と `diff` を返す。古い revision は `revision_conflict` で拒否 | +1 |
+| `update_map(map_id, expected_revision, tasks?, analysis?, source?, title?)` | tasks / analysis / title は全体を置き換える。正規化後に同じなら revision は上げず、「変更なし（revision N のまま）」と `unchanged: true` を返す。変わったときだけ差分の 1 行と `diff` を返す。古い revision は、中身が同じでも `revision_conflict` で拒否 | 変わったときだけ +1 |
 | `get_map(map_id)` | 現在の図。structuredContent に tasks と analysis | 変わらない |
 | `simulate_delay(map_id, task_id)` | What-if。遅延元を太枠、影響を受けるタスクとエッジを黄色で示す。保存しない | 変わらない |
 | `list_maps()` | map_id の一覧 | - |
-| `set_bot_status(map_id, bot, status, note?, say?)` | Bot の状態を記録する。専門Botが `working` になると、PM は自動で `idle`（「〜の結果待ち」）になる。`say` はそのBotの口調の一言（GIF のふきだし） | 変わらない |
+| `set_bot_status(map_id, bot, status, note?, say?)` | Bot の状態を記録する。専門Botが `working` になると、PM は自動で `idle`（「〜の結果待ち」）になる。`say` はそのBotの口調の一言（GIF のふきだし）。ツール一覧に `say` が無いときは、`note` に `｜ say:一言` または `{"note","say"}` と書く | 変わらない |
+| `parse_handoff(text, role?)` | 専門Botのプレーンテキスト返信から JSON を1つ取り出す（前置き、json のコードフェンス、末尾カンマ、スマートクォートを除く）。role を付けると必要な項目を検査する | - |
 | `get_status(map_id)` | Bot の稼働図（mermaid）と直近の履歴 | 変わらない |
 | `render_flow_gif(map_id)` | 直近 1 周の流れを `out/{map_id}_flow.gif` に書き出し、そのパスを返す | 変わらない |
 | `render_team_card()` | 4 体のチーム紹介の GIF を `out/tamap_team.gif` に書き出す（挨拶に添付） | - |
@@ -157,7 +159,7 @@ scripts/live_view.sh          # 閲覧専用のライブページ（任意。127
 ## テスト
 
 ```bash
-uv run python -m unittest tests.test_core   # Core・ストア（自動待機・差分・before）・GIF・ライブページ（読み取り専用・SSE）
+uv run python -m unittest tests.test_core tests.test_handoff   # Core・ストア・ハンドオフ・GIF・ライブページ
 uv run python tests/e2e_mcp.py              # stdio MCP サーバーを公式クライアントで起動し、全ツールを呼ぶ（ライブページ・CLI も含む）
 # 任意：ライブページを headless Chrome で開いてスクリーンショットを撮る（Chrome と puppeteer-core が必要。docs/LIVE_VIEW.md）
 # node tests/live_browser.js <base_url> <data_dir> <map_id> <out_dir>
