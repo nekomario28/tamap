@@ -319,6 +319,14 @@ async def main():
                   "parse_handoff reads a fenced reply")
             res, md, d = await call(s, "parse_handoff", {"text": "JSONがありません", "role": "quality_reviewer"})
             check(res.isError and "JSON が見つかりません" in md and d.get("hint"), "parse_handoff explains a missing block")
+            res, md, d = await call(s, "parse_handoff", {"text": messy, "bot": "map_architect"},
+                                    "parse_handoff（bot 引数）")
+            check(not res.isError and d.get("ok") is True and d["data"]["tasks"][0]["id"] == "T1"
+                  and d.get("role") == "map_architect" and "エラー" not in md,
+                  "parse_handoff(bot, text) returns data")
+            res, md, d = await call(s, "parse_handoff",
+                                    {"text": messy, "bot": "map_architect", "role": "risk_analyst"})
+            check(res.isError and "違います" in md and d.get("hint"), "parse_handoff rejects bot/role mismatch")
             res, md, d = await call(s, "set_bot_status", {"map_id": mid, "bot": "map_architect", "status": "working",
                                                           "note": "線を確認 ｜ say:線、つなぐっす。"},
                                     "set_bot_status（note に say を埋め込む）")
@@ -326,6 +334,18 @@ async def main():
                   and d["bots"]["map_architect"]["say"] == "線、つなぐっす。",
                   "say read from note when the say argument is absent")
             check("「線、つなぐっす。」" in md, "embedded say shows in the status chart")
+            res, md, d = await call(s, "set_bot_status", {"map_id": mid, "bot": "risk_analyst", "status": "done",
+                                                          "note": "影響はT6・T7", "say": "先はT6とT7かも"},
+                                    "set_bot_status（完了でも say を稼働図に出す）")
+            check("「先はT6とT7かも」" in md and "(^ω^) 完了" in md and "影響の先、見つけました！" not in md,
+                  "done bot shows the passed say, not the catchphrase")
+            res, md, d = await call(s, "get_status", {"map_id": mid})
+            check("「先はT6とT7かも」" in md, "get_status shows the done say")
+            res, md, d = await call(s, "set_bot_status", {"map_id": mid, "bot": "quality_reviewer", "status": "error",
+                                                          "note": "60秒応答なし", "say": "ここ、直したいね"},
+                                    "set_bot_status（エラーでも say を稼働図に出す）")
+            check("「ここ、直したいね」" in md and "読みきれなかった…ごめんね" not in md,
+                  "error bot shows the passed say")
 
     live_checks(mid)
 
@@ -336,8 +356,22 @@ async def main():
                        cwd="/tmp", env=ENV, capture_output=True, text=True, timeout=60)
     body = json.loads(p.stderr)
     check(p.returncode == 0 and body["bots"]["quality_reviewer"]["say"] == "指摘なしだよ"
-          and body["bots"]["quality_reviewer"]["note"] == "指摘なし",
-          "tamap_cli.sh set_bot_status reads say from note")
+          and body["bots"]["quality_reviewer"]["note"] == "指摘なし"
+          and "「指摘なしだよ」" in p.stdout and "(^ω^) 完了" in p.stdout,
+          "tamap_cli.sh set_bot_status reads say from note and shows it for done")
+    p = subprocess.run([cli, "parse_handoff", json.dumps(
+        {"bot": "quality_reviewer", "text": "見たよ。\n```json\n{\"items\": [], \"say\": \"指摘なしだよ\"}\n```"},
+        ensure_ascii=False)], cwd="/tmp", env=ENV, capture_output=True, text=True, timeout=60)
+    body = json.loads(p.stderr)
+    check(p.returncode == 0 and body.get("ok") is True and body["data"]["items"] == []
+          and body["data"]["say"] == "指摘なしだよ" and "指摘 0件" in p.stdout,
+          "tamap_cli.sh parse_handoff (allowlist includes the MCP tool)")
+    p = subprocess.run([cli, "parse_handoff", json.dumps(
+        {"bot": "map_architect", "text": "JSONがありません"}, ensure_ascii=False)],
+                       cwd="/tmp", env=ENV, capture_output=True, text=True, timeout=60)
+    check(p.returncode == 1 and "エラー:" in p.stdout and "ヒント:" in p.stdout
+          and json.loads(p.stderr).get("hint"),
+          "tamap_cli.sh parse_handoff error text includes the hint")
     p = subprocess.run([cli, "simulate_delay", json.dumps({"map_id": mid, "task_id": "T4"})], cwd="/tmp", env=ENV,
                        capture_output=True, text=True, timeout=60)
     check(p.returncode == 0 and p.stdout.startswith("```mermaid") and "what-if: T4" in p.stdout

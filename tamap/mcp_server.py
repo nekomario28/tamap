@@ -29,7 +29,8 @@ mcp = FastMCP(
         "if the tool schema has no say argument, embed it in note as '事実 ｜ say:一言' or {\"note\",\"say\"}. "
         "render_flow_gif replays the last cycle as out/<map_id>_flow.gif to attach to the result message; the bots "
         "appear as pixel characters. render_team_card makes out/tamap_team.gif for the greeting. "
-        "parse_handoff reads a specialist's plain-text reply (prose, ```json fences, trailing commas, smart quotes). "
+        "parse_handoff(text, bot) reads each specialist reply (prose, ```json fences, trailing commas, smart quotes) "
+        "and returns the object as structuredContent.data; pass the raw message, do not parse it yourself. "
         "get_live_url gives an optional read-only live page (scripts/live_view.sh) where the bots move in real time. "
         "Task status: done/in_progress/todo/blocked. Validation (duplicate ids, unknown references, cycles) is "
         "computed by deterministic code; do not override it in prose. Optional analysis = {pm:{summary, actions"
@@ -158,17 +159,29 @@ def set_bot_status(map_id: str, bot: str, status: str, note: str | None = None,
         return _fail(e)
 
 
+def _handoff_bot(bot: str | None, role: str | None) -> str | None:
+    """`bot` and `role` are the same argument. Either name may be used; both must agree if set."""
+    b = str(bot).strip() if bot is not None and str(bot).strip() else ""
+    r = str(role).strip() if role is not None and str(role).strip() else ""
+    if b and r and handoff.canon_role(b) != handoff.canon_role(r):
+        raise handoff.HandoffError(
+            f"bot と role が違います（{b} / {r}）。どちらか一方を指定してください。",
+            hint="bot（role でも同じ）は map_architect / risk_analyst / quality_reviewer です。")
+    return handoff.canon_role(b or r or None)
+
+
 @mcp.tool()
-def parse_handoff(text: str, role: str | None = None) -> CallToolResult:
-    """Extract one JSON object from a specialist bot's plain-text reply.
+def parse_handoff(text: str, bot: str | None = None, role: str | None = None) -> CallToolResult:
+    """Extract one JSON object from a specialist bot's plain-text reply. Call this on every reply; do not parse it yourself.
 
     Tolerates surrounding prose, a ```json fence, trailing commas, and smart quotes (“ ”).
-    role: map_architect | risk_analyst | quality_reviewer (optional). When set, checks the fields that
-    bot should return and explains what is missing. Text result is one line; the object is structuredContent.data.
+    bot: map_architect | risk_analyst | quality_reviewer (optional; `role` is the same argument).
+    When set, checks the fields that bot should return and explains what is missing.
+    Text result is one short line (or エラー + ヒント). The object is structuredContent.data.
     Do not paste this line into the user-facing result — use data.
     """
     try:
-        parsed = handoff.parse_reply(text, role)
+        parsed = handoff.parse_reply(text, _handoff_bot(bot, role))
     except handoff.HandoffError as e:
         hint = f"\nヒント: {e.hint}" if e.hint else ""
         return CallToolResult(

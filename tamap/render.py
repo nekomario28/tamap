@@ -203,7 +203,9 @@ def render_status(m: dict, history_limit: int = 5) -> str:
         b = bots.get(key) or {"status": "idle"}
         p = persona.PERSONAS[key]
         parts = [f"{p['emoji']} {label}", f"{mm_text(persona.FACES[b['status']])} {BOT_STATUS_JA[b['status']]}"]
-        if b["status"] in ("working", "error"):
+        # Same speech line as the flow GIF and the live page: explicit say, otherwise the persona line.
+        # Idle stays quiet here (its note is already the factual line, e.g. 「結果待ち」).
+        if b["status"] in ("working", "done", "error"):
             parts.append(f"「{mm_text(persona.line(key, b['status'], b.get('say')))}」")
         if b.get("note"):
             parts.append(mm_text(_short(b["note"], 36)))

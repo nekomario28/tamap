@@ -1,11 +1,15 @@
 """Shared store: one JSON file per map_id (the source of truth for TaMap state).
 
-Writes are atomic (tmp file + os.replace) and serialized with an fcntl lock so that
-expected_revision checks are race-free between concurrent MCP processes.
+Each read-modify-write (create_map / update_map / set_bot_status) holds one exclusive
+fcntl lock for the whole critical section, then publishes the new JSON with
+os.replace. The lock sits on a stable file, DATA_DIR/.lock, which is never replaced.
+Locking the map JSON itself would not work: os.replace unlinks that inode, and the
+next process would lock the new inode and race with the writer that still holds the old one.
 """
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import copy
 import fcntl
 import json
@@ -49,18 +53,35 @@ def _path(map_id: str) -> Path:
     return DATA_DIR / f"{map_id}.json"
 
 
+# True only while this context holds the store lock. Catches a write that escaped the critical section.
+_lock_held = contextvars.ContextVar("tamap_store_lock_held", default=False)
+
+
 @contextlib.contextmanager
 def _lock():
+    """Exclusive lock around one read-modify-write. The fd stays open until the new JSON is published.
+
+    O_CLOEXEC / non-inheritable: a forked child must not keep this fd, or it would hold the lock
+    after the parent unlocked (and could deadlock if it tried to lock again).
+    """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with open(DATA_DIR / ".lock", "a+") as fh:
-        fcntl.flock(fh, fcntl.LOCK_EX)
+    fd = os.open(DATA_DIR / ".lock", os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o644)
+    os.set_inheritable(fd, False)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        token = _lock_held.set(True)
         try:
             yield
         finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
+            _lock_held.reset(token)
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 def _write(map_: dict) -> None:
+    if not _lock_held.get():
+        raise StoreError("internal: map write outside the store lock")
     p = _path(map_["map_id"])
     tmp = p.with_suffix(f".tmp-{os.getpid()}")
     tmp.write_text(json.dumps(map_, ensure_ascii=False, indent=2), encoding="utf-8")

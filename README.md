@@ -99,7 +99,7 @@ TaMap MCP サーバー（scripts/mcp_server.sh → tamap/mcp_server.py, FastMCP�
 | `simulate_delay(map_id, task_id)` | What-if。遅延元を太枠、影響を受けるタスクとエッジを黄色で示す。保存しない | 変わらない |
 | `list_maps()` | map_id の一覧 | - |
 | `set_bot_status(map_id, bot, status, note?, say?)` | Bot の状態を記録する。専門Botが `working` になると、PM は自動で `idle`（「〜の結果待ち」）になる。`say` はそのBotの口調の一言（GIF のふきだし）。ツール一覧に `say` が無いときは、`note` に `｜ say:一言` または `{"note","say"}` と書く | 変わらない |
-| `parse_handoff(text, role?)` | 専門Botのプレーンテキスト返信から JSON を1つ取り出す（前置き、json のコードフェンス、末尾カンマ、スマートクォートを除く）。role を付けると必要な項目を検査する | - |
+| `parse_handoff(text, bot?, role?)` | 専門Botの返信を毎回これに渡す（自分ではパースしない）。前置き、json のコードフェンス、末尾カンマ、スマートクォートを除いて JSON を1つ取り出す。`bot`（`role` でも同じ）を付けると必要な項目を検査する。オブジェクトは structuredContent の `data` | - |
 | `get_status(map_id)` | Bot の稼働図（mermaid）と直近の履歴 | 変わらない |
 | `render_flow_gif(map_id)` | 直近 1 周の流れを `out/{map_id}_flow.gif` に書き出し、そのパスを返す | 変わらない |
 | `render_team_card()` | 4 体のチーム紹介の GIF を `out/tamap_team.gif` に書き出す（挨拶に添付） | - |

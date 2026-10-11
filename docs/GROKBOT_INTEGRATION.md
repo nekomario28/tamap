@@ -113,11 +113,11 @@ Map Architect へ。次の文章をタスクに分解してください。ID が
 ````
 
 - フェンスは1つ。前に一言までなら書いてよい（`parse_handoff` が捨てる）。
-- 末尾カンマや曲がった引用符（“ ”）が混ざっても、PM は自分で直さず `parse_handoff(text, role)` に本文をそのまま渡す。
+- 末尾カンマや曲がった引用符（“ ”）が混ざっても、PM は自分で直さず `parse_handoff(text, bot)` に本文をそのまま渡す。自分で JSON を読まない。
 - 成功したら `structuredContent.data` を使う。このツールの1行はユーザーには貼らない。
 - 失敗したら、返ってきたエラーとヒントを添えて、そのBotに1回だけ送り直す。
 
-`parse_handoff` は `tamap/handoff.py` と MCP ツール（`scripts/tamap_cli.sh parse_handoff` でも同じ）である。role は `map_architect` / `risk_analyst` / `quality_reviewer`。
+`parse_handoff` は MCP ツールである（`scripts/tamap_cli.sh parse_handoff` でも同じ。CLI の許可リストは MCP のツール一覧から作る）。`bot` は `map_architect` / `risk_analyst` / `quality_reviewer`。`role` という引数名でも同じ。両方渡したときは一致している必要がある。
 - **待ち時間**：UX は「60 秒応答なしでエラー表示」を前提にしている。しかし PM が teammate の返信を同じターンの中で待てるのか、それとも返信が別のターンとして届くのかは【未確認】。返信が別のターンとして届く場合は、PM は依頼を出したらいったんターンを終え、返信のたびに次の依頼を出す（状態は map の `bots` に残っているので、PM のメモリだけに頼らない）。
 
 ### 別案：数珠つなぎ（PM → MA → RA → QR → PM）
@@ -169,7 +169,7 @@ Map Architect へ。次の文章をタスクに分解してください。ID が
    - 事実（何をしているか）は、今までどおり下の字幕（note）に出す。
 2. **チーム紹介の GIF**（新しいツール `render_team_card` → `out/tamap_team.gif`）：4 体が跳ねてまばたきする、約 1.7 秒のループ。
    - PM の最初の挨拶に添付する（UX_DESIGN 3.1 の挨拶＋サンプルのボタン）。
-3. **Bot の稼働図（mermaid）**：各ノードを「📋 TaMap PM」のように絵文字つきの名前にし、状態の顔文字（`(-ω-)zz` 待機、`(•ω•)✧` 作業中、`(^ω^)` 完了、`(>ω<;)` エラー）を付ける。作業中とエラーのBotには、ふきだしの一言も入れる。
+3. **Bot の稼働図（mermaid）**：各ノードを「📋 TaMap PM」のように絵文字つきの名前にし、状態の顔文字（`(-ω-)zz` 待機、`(•ω•)✧` 作業中、`(^ω^)` 完了、`(>ω<;)` エラー）を付ける。作業中・完了・エラーのBotには、ふきだしの一言も入れる（`say` があればそれ、無ければ口ぐせ。GIF とライブページと同じ）。待機は口ぐせを出さず、note（「〜の結果待ち」など）だけを出す。
 4. **チャットの文面**：一言は「飾りの 1 行」だけにする。具体的には次の 3 か所。
    - 結果の「レビューで直した点」の見出しの後ろの一言。
    - エラー投稿の 1 行目。
@@ -196,9 +196,11 @@ Map Architect へ。次の文章をタスクに分解してください。ID が
 **確認済み**
 - 【P0】Grok Bot のチャットで mermaid（classDef・linkStyle・style・破線/太線・`<br>`）が描画される。アニメーション GIF の添付が再生される。
 - 【開発VM】
-  - 全ツールの入出力（e2e 94 項目）。ライブページ（読み取り専用、SSE、headless Chrome でのドット絵の一致）。
+  - 全ツールの入出力（e2e 101 項目）。ライブページ（読み取り専用、SSE、headless Chrome でのドット絵の一致）。
   - 内容が同じ `update_map` は revision を上げない（`unchanged: true`、本文「変更なし（revision N のまま）」）。`expected_revision` が違うときは、中身が同じでも拒否する（unittest・e2e）。
-  - `parse_handoff` が、前置き・json のコードフェンス・末尾カンマ・スマートクォートを除いて専門Botの JSON を読む。足りない項目はエラー文で返す（unittest・e2e）。
+  - `set_bot_status` と `update_map` の読み取り・変更・書き込みは、置き換えないロックファイル上の排他ロックの中で行う。複数プロセスが同時に `set_bot_status` しても、各 `note` の履歴は残る。同じ revision への `update_map` は1件だけ成功する（unittest）。
+  - 稼働図は、作業中・完了・エラーに `say`（無ければ口ぐせ）を出す（unittest・e2e。`get_status` と `tamap_cli.sh` でも同じ）。
+  - `parse_handoff(text, bot)`（`role` でも同じ）が、前置き・json のコードフェンス・末尾カンマ・スマートクォートを除いて専門Botの JSON を読む。足りない項目はエラーとヒントで返す。CLI の許可リストは MCP のツール一覧なので `tamap_cli.sh parse_handoff` も同じ（unittest・e2e）。
   - `set_bot_status` の `note` に `｜ say:一言` または `{"note","say"}` と書くと、`say` 引数が無くてもふきだしの一言になる（unittest・e2e。`tamap_cli.sh` でも同じ）。
   - 専門Botが作業中になると PM が自動で待機になること（P2）。
   - 差分の 1 行と `diff`（P3）。
@@ -241,7 +243,7 @@ Map Architect へ。次の文章をタスクに分解してください。ID が
 
 ■ 専門Botとのメッセージ（プレーンテキスト）
 Bot間のメッセージはプレーンテキストです。メッセージ全体を JSON にしないでください（最初の文字を { にしない）。依頼は日本語の説明のあとに、```json フェンスを1つだけ付けます（docs/GROKBOT_INTEGRATION.md の 2.1）。
-返信が来たら、本文をそのまま parse_handoff(text, role) に渡します（role は map_architect / risk_analyst / quality_reviewer）。成功したら structuredContent.data を使います。このツールの文面はユーザーに貼りません。失敗したら、エラーの文を添えてそのBotに1回だけ送り直します。それでもダメなら、そのBotをエラーにして UX_DESIGN 6章のボタンを出します。
+返信が来たら、毎回、本文をそのまま parse_handoff(text, bot) に渡します（bot は map_architect / risk_analyst / quality_reviewer。role という引数名でも同じです）。自分で JSON を読んだり、フェンスを外したりしません。成功したら structuredContent.data を使います。このツールの文面はユーザーに貼りません。失敗したら、エラーとヒントを添えてそのBotに1回だけ送り直します。それでもダメなら、そのBotをエラーにして UX_DESIGN 6章のボタンを出します。
 
 ■ say 引数がツール一覧に無いとき
 set_bot_status の引数に say が無い（接続側が古いスキーマを覚えている）ときは、note に埋め込みます。
@@ -254,7 +256,7 @@ say 引数があるときは、今までどおり say= で渡してよいです�
 2. 開始の1行を投稿する（UX_DESIGN 4.1 の文面）。
 3. create_map（新規）または update_map（既存）で map_id と revision を決める。map_id はメモリに残す。
 4. set_bot_status で pm を working にする。note は「受付 ｜ say:まかせてください！」（say 引数が使えるなら note="受付", say="まかせてください！" でもよい）。
-5. 各専門Botについて順番に（Map Architect → Risk Analyst → Quality Reviewer）：set_bot_status(map_id, <bot>, working, note="<短い内容> ｜ say:<口ぐせ>") を呼んでから、2.1 の形で依頼を送る（PM はツール側で自動的に待機になる）。返信は parse_handoff で読む。読めたら set_bot_status(map_id, <bot>, done, note="<短い結果> ｜ say:<data.say>") を呼ぶ（say は GIF のふきだしになる。note は事実だけ）。
+5. 各専門Botについて順番に（Map Architect → Risk Analyst → Quality Reviewer）：set_bot_status(map_id, <bot>, working, note="<短い内容> ｜ say:<口ぐせ>") を呼んでから、2.1 の形で依頼を送る（PM はツール側で自動的に待機になる）。PM の working と専門Botの working は、同時に呼ばず、この順で1つずつ呼ぶ。返信は毎回 parse_handoff(text, bot) で読む（自分でパースしない）。読めたら set_bot_status(map_id, <bot>, done, note="<短い結果> ｜ say:<data.say>") を呼ぶ（say は GIF と稼働図のふきだしになる。完了でも say は図に出る。note は事実だけ）。
    - Map Architect の tasks で update_map する。structuredContent.unchanged が true なら revision はそのまま。ユーザーに rev が上がったとは書かない。
    - Risk Analyst には map_id を渡す。影響先はツールの計算を使い、自分で足さない、と依頼に書く。
    - Quality Reviewer には、あなたが書いた3アクションの案と Risk Analyst の結果を渡す。
@@ -363,9 +365,9 @@ Map Architect が同じ tasks を返し、rev 1 が rev 2 になった。タス�
 
 Bot 間はプレーンテキストなのに、PM が Quality Reviewer への依頼を JSON として埋め込んだため、送信が1回失敗した。
 
-対処: 2.1 の形にする。依頼も返信も、日本語の文＋ json のコードフェンス1つ。PM は返信本文を `parse_handoff(text, role)` に渡す。前置き、フェンス、末尾カンマ、スマートクォート（“ ” ‘ ’）はサーバーが除く。JSON がオブジェクトでない、必要な項目が無い、といったときはエラーとヒントが返る。それを添えて1回だけ送り直す。
+対処: 2.1 の形にする。依頼も返信も、日本語の文＋ json のコードフェンス1つ。PM は返信本文を `parse_handoff(text, bot)` に渡す（`role` でも同じ）。前置き、フェンス、末尾カンマ、スマートクォート（“ ” ‘ ’）はサーバーが除く。JSON がオブジェクトでない、必要な項目が無い、といったときはエラーとヒントが返る。それを添えて1回だけ送り直す。
 
-`scripts/tamap_cli.sh parse_handoff` に `{"text":"…返信…","role":"quality_reviewer"}` を渡しても同じ関数を呼べる。
+`scripts/tamap_cli.sh parse_handoff` に `{"text":"…返信…","bot":"quality_reviewer"}` を渡しても同じ関数を呼べる。
 
 ### 7.3 set_bot_status に say を渡せない
 
@@ -384,3 +386,27 @@ PM のツール一覧に `say` が無かった。接続側が、キャラクタ�
 `scripts/tamap_cli.sh set_bot_status '{"map_id":"…","bot":"pm","status":"working","note":"受付","say":"まかせてください！"}'`
 
 ツール一覧が更新されたあとは、`say` を引数で渡してよい。どちらでもサーバーの動きは同じ。
+
+## 8. トラブルシューティング（2回目の実機4ボットで出たもの）
+
+2026-10-11、7章の修正のあとにもう一度4体で1周したときに残った3件。下の対処は開発VMの unittest と e2e で確認した。同じ4体でもう一度1周して確かめたわけではない【未確認】。
+
+### 8.1 set_bot_status を同時に呼ぶと、片方の履歴が消える
+
+PM が `set_bot_status(pm, working)` と `set_bot_status(map_architect, working)` を並列に呼んだ（stdio の呼び出しが別プロセスになりうる）。Map Architect 側の結果では PM が待機のまま「結果待ち」が無く、PM の履歴が一時的に消えた。後から書いた方が、先に書いた内容を知らないままファイル全体を置き換えていた。
+
+対処: `create_map` / `update_map` / `set_bot_status` の読み取り・変更・書き込みは、すべて1つの排他ロックの中で行う。ロックは `data/maps/.lock`（`TAMAP_DATA_DIR` を変えたときはその中）に取る。このファイルは置き換えない。マップの JSON を `os.replace` で差し替える側にはロックを掛けない（差し替えると古い inode にロックが残り、次のプロセスは新しい inode を別のロックとして取ってしまう）。
+
+並列でも、各 `note` の履歴は残る。ただし「結果待ち」は、専門Botを working にした時点で PM が待機以外のときだけ付く。PM の working が後から保存されると、PM は作業中のままになる。だから 5.1 のとおり、PM の working を先に、専門Botの working を次に、1つずつ呼ぶ。
+
+### 8.2 稼働図が、完了したBotの say を出さない
+
+`set_bot_status` / `get_status` の mermaid は、作業中（とエラー）のふきだしだけを出していて、完了に `say` を渡してもノードに載らなかった。GIF とライブページは完了でも一言を出す。
+
+対処: 作業中・完了・エラーは、`say` があればそれを、無ければ口ぐせを「」で出す。待機は今までどおり note だけ。
+
+### 8.3 専門Botの返信を、PM が自分でパースしていた
+
+`parse_handoff` はサーバーの関数としてはある。PM はツールとして呼ばず、返信の JSON を自分で読んでいた。
+
+対処: MCP ツール `parse_handoff(text, bot)` を使う（`role` でも同じ）。成功時は1行の説明と `structuredContent.data`。失敗時は `エラー:` と `ヒント:`、structuredContent の `ok: false` / `error` / `hint`。`scripts/tamap_cli.sh parse_handoff` も同じ関数を呼ぶ（許可リストは MCP のツール一覧）。専門Botの返信のたびに、本文をそのまま渡す（5.1・2.1）。

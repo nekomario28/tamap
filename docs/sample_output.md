@@ -31,7 +31,7 @@ graph LR
   class n3,n5,n6 todo
   style n2 stroke:#7c2d12,stroke-width:4px,stroke-dasharray:6 3
 ```
-revision 1 ・ map_id `NlyCHoF3` ・ 更新 15:14:40 JST ・ 検証OK
+revision 1 ・ map_id `IfE48Ucs` ・ 更新 15:48:17 JST ・ 検証OK
 
 ---
 
@@ -67,13 +67,13 @@ graph LR
   class n5,n6 todo
   style n3 stroke:#7c2d12,stroke-width:4px,stroke-dasharray:6 3
 ```
-revision 2 ・ map_id `NlyCHoF3` ・ 更新 15:14:40 JST ・ 検証OK
+revision 2 ・ map_id `IfE48Ucs` ・ 更新 15:48:17 JST ・ 検証OK
 
 ---
 
 ## update_map（古いrevisionで更新 → 拒否）
 
-エラー: revision conflict: map NlyCHoF3 は revision 2 です（expected_revision=1）。 get_map で最新状態を読み直してから再度 update_map してください。
+エラー: revision conflict: map IfE48Ucs は revision 2 です（expected_revision=1）。 get_map で最新状態を読み直してから再度 update_map してください。
 
 ---
 
@@ -109,7 +109,7 @@ graph LR
   class n5,n6 todo
   style n3 stroke:#7c2d12,stroke-width:4px,stroke-dasharray:6 3
 ```
-revision 2 ・ map_id `NlyCHoF3` ・ 更新 15:14:40 JST ・ 検証OK
+revision 2 ・ map_id `IfE48Ucs` ・ 更新 15:48:17 JST ・ 検証OK
 
 ---
 
@@ -143,7 +143,7 @@ graph LR
   class n5,n6 todo
   style n3 stroke:#7c2d12,stroke-width:4px,stroke-dasharray:6 3
 ```
-revision 2 ・ map_id `NlyCHoF3` ・ 更新 15:14:40 JST ・ 検証OK
+revision 2 ・ map_id `IfE48Ucs` ・ 更新 15:48:17 JST ・ 検証OK
 
 ---
 
@@ -179,7 +179,7 @@ graph LR
   style n3 stroke:#ca8a04,stroke-width:5px
   linkStyle 4,6 stroke:#ca8a04,stroke-width:4px
 ```
-revision 2 ・ map_id `NlyCHoF3` ・ 更新 15:14:40 JST ・ 検証OK ・ what-if: T4（保存なし）
+revision 2 ・ map_id `IfE48Ucs` ・ 更新 15:48:17 JST ・ 検証OK ・ what-if: T4（保存なし）
 
 ---
 
@@ -188,8 +188,8 @@ revision 2 ・ map_id `NlyCHoF3` ・ 更新 15:14:40 JST ・ 検証OK ・ what-i
 ```mermaid
 flowchart LR
   U(["ユーザー"])
-  PM["📋 TaMap PM<br>(-ω-)zz 待機<br>Map Architectの結果待ち<br>15:14:40 JST"]
-  MA["🗺️ Map Architect<br>(•ω•)✧ 作業中<br>「線、7本つなぐっす。」<br>T1〜T7を構造化中<br>15:14:40 JST"]
+  PM["📋 TaMap PM<br>(-ω-)zz 待機<br>Map Architectの結果待ち<br>15:48:17 JST"]
+  MA["🗺️ Map Architect<br>(•ω•)✧ 作業中<br>「線、7本つなぐっす。」<br>T1〜T7を構造化中<br>15:48:17 JST"]
   RA["⚠️ Risk Analyst<br>(-ω-)zz 待機"]
   QR["✅ Quality Reviewer<br>(-ω-)zz 待機"]
   U -- 依頼 --> PM
@@ -207,10 +207,10 @@ flowchart LR
   class MA working
   linkStyle 1 stroke:#2563eb,stroke-width:5px
 ```
-map `NlyCHoF3` のBot稼働状況 ・ 直近の変更（新しい順）:
-- 15:14:40 Map Architect: 作業中（T1〜T7を構造化中）
-- 15:14:40 TaMap PM: 待機（Map Architectの結果待ち）
-- 15:14:40 TaMap PM: 作業中（依頼を受付）
+map `IfE48Ucs` のBot稼働状況 ・ 直近の変更（新しい順）:
+- 15:48:17 Map Architect: 作業中（T1〜T7を構造化中）
+- 15:48:17 TaMap PM: 待機（Map Architectの結果待ち）
+- 15:48:17 TaMap PM: 作業中（依頼を受付）
 
 ---
 
@@ -219,9 +219,9 @@ map `NlyCHoF3` のBot稼働状況 ・ 直近の変更（新しい順）:
 ```mermaid
 flowchart LR
   U(["ユーザー"])
-  PM["📋 TaMap PM<br>(-ω-)zz 待機<br>Map Architectの結果待ち<br>15:14:40 JST"]
-  MA["🗺️ Map Architect<br>(^ω^) 完了<br>7タスク・7依存<br>15:14:40 JST"]
-  RA["⚠️ Risk Analyst<br>(•ω•)✧ 作業中<br>「ここ、あやしいかも…」<br>T4遅延の波及を分析中<br>15:14:40 JST"]
+  PM["📋 TaMap PM<br>(-ω-)zz 待機<br>Map Architectの結果待ち<br>15:48:17 JST"]
+  MA["🗺️ Map Architect<br>(^ω^) 完了<br>「地図、できたっす！」<br>7タスク・7依存<br>15:48:17 JST"]
+  RA["⚠️ Risk Analyst<br>(•ω•)✧ 作業中<br>「ここ、あやしいかも…」<br>T4遅延の波及を分析中<br>15:48:17 JST"]
   QR["✅ Quality Reviewer<br>(-ω-)zz 待機"]
   U -- 依頼 --> PM
   PM -- 分解 --> MA
@@ -239,12 +239,12 @@ flowchart LR
   class RA working
   linkStyle 2 stroke:#2563eb,stroke-width:5px
 ```
-map `NlyCHoF3` のBot稼働状況 ・ 直近の変更（新しい順）:
-- 15:14:40 Risk Analyst: 作業中（T4遅延の波及を分析中）
-- 15:14:40 Map Architect: 完了（7タスク・7依存）
-- 15:14:40 Map Architect: 作業中（T1〜T7を構造化中）
-- 15:14:40 TaMap PM: 待機（Map Architectの結果待ち）
-- 15:14:40 TaMap PM: 作業中（依頼を受付）
+map `IfE48Ucs` のBot稼働状況 ・ 直近の変更（新しい順）:
+- 15:48:17 Risk Analyst: 作業中（T4遅延の波及を分析中）
+- 15:48:17 Map Architect: 完了（7タスク・7依存）
+- 15:48:17 Map Architect: 作業中（T1〜T7を構造化中）
+- 15:48:17 TaMap PM: 待機（Map Architectの結果待ち）
+- 15:48:17 TaMap PM: 作業中（依頼を受付）
 
 ---
 
@@ -253,10 +253,10 @@ map `NlyCHoF3` のBot稼働状況 ・ 直近の変更（新しい順）:
 ```mermaid
 flowchart LR
   U(["ユーザー"])
-  PM["📋 TaMap PM<br>(•ω•)✧ 作業中<br>「まかせてください！」<br>結果を統合中<br>15:14:40 JST"]
-  MA["🗺️ Map Architect<br>(^ω^) 完了<br>7タスク・7依存<br>15:14:40 JST"]
-  RA["⚠️ Risk Analyst<br>(^ω^) 完了<br>15:14:40 JST"]
-  QR["✅ Quality Reviewer<br>(#gt;ω#lt;;) エラー<br>「読みきれなかった…ごめんね」<br>T9参照を確認できず<br>15:14:40 JST"]
+  PM["📋 TaMap PM<br>(•ω•)✧ 作業中<br>「まかせてください！」<br>結果を統合中<br>15:48:17 JST"]
+  MA["🗺️ Map Architect<br>(^ω^) 完了<br>「地図、できたっす！」<br>7タスク・7依存<br>15:48:17 JST"]
+  RA["⚠️ Risk Analyst<br>(^ω^) 完了<br>「影響の先、見つけました！」<br>15:48:17 JST"]
+  QR["✅ Quality Reviewer<br>(#gt;ω#lt;;) エラー<br>「読みきれなかった…ごめんね」<br>T9参照を確認できず<br>15:48:17 JST"]
   U -- 依頼 --> PM
   PM -- 分解 --> MA
   MA -- 構造 --> RA
@@ -273,12 +273,12 @@ flowchart LR
   class QR error
   linkStyle 4 stroke:#2563eb,stroke-width:5px
 ```
-map `NlyCHoF3` のBot稼働状況 ・ 直近の変更（新しい順）:
-- 15:14:40 TaMap PM: 作業中（結果を統合中）
-- 15:14:40 Risk Analyst: 完了
-- 15:14:40 Quality Reviewer: エラー（T9参照を確認できず）
-- 15:14:40 Risk Analyst: 作業中（T4遅延の波及を分析中）
-- 15:14:40 Map Architect: 完了（7タスク・7依存）
+map `IfE48Ucs` のBot稼働状況 ・ 直近の変更（新しい順）:
+- 15:48:17 TaMap PM: 作業中（結果を統合中）
+- 15:48:17 Risk Analyst: 完了
+- 15:48:17 Quality Reviewer: エラー（T9参照を確認できず）
+- 15:48:17 Risk Analyst: 作業中（T4遅延の波及を分析中）
+- 15:48:17 Map Architect: 完了（7タスク・7依存）
 
 ---
 
@@ -287,10 +287,10 @@ map `NlyCHoF3` のBot稼働状況 ・ 直近の変更（新しい順）:
 ```mermaid
 flowchart LR
   U(["ユーザー"])
-  PM["📋 TaMap PM<br>(•ω•)✧ 作業中<br>「まかせてください！」<br>結果を統合中<br>15:14:40 JST"]
-  MA["🗺️ Map Architect<br>(^ω^) 完了<br>7タスク・7依存<br>15:14:40 JST"]
-  RA["⚠️ Risk Analyst<br>(^ω^) 完了<br>15:14:40 JST"]
-  QR["✅ Quality Reviewer<br>(#gt;ω#lt;;) エラー<br>「読みきれなかった…ごめんね」<br>T9参照を確認できず<br>15:14:40 JST"]
+  PM["📋 TaMap PM<br>(•ω•)✧ 作業中<br>「まかせてください！」<br>結果を統合中<br>15:48:17 JST"]
+  MA["🗺️ Map Architect<br>(^ω^) 完了<br>「地図、できたっす！」<br>7タスク・7依存<br>15:48:17 JST"]
+  RA["⚠️ Risk Analyst<br>(^ω^) 完了<br>「影響の先、見つけました！」<br>15:48:17 JST"]
+  QR["✅ Quality Reviewer<br>(#gt;ω#lt;;) エラー<br>「読みきれなかった…ごめんね」<br>T9参照を確認できず<br>15:48:17 JST"]
   U -- 依頼 --> PM
   PM -- 分解 --> MA
   MA -- 構造 --> RA
@@ -307,12 +307,12 @@ flowchart LR
   class QR error
   linkStyle 4 stroke:#2563eb,stroke-width:5px
 ```
-map `NlyCHoF3` のBot稼働状況 ・ 直近の変更（新しい順）:
-- 15:14:40 TaMap PM: 作業中（結果を統合中）
-- 15:14:40 Risk Analyst: 完了
-- 15:14:40 Quality Reviewer: エラー（T9参照を確認できず）
-- 15:14:40 Risk Analyst: 作業中（T4遅延の波及を分析中）
-- 15:14:40 Map Architect: 完了（7タスク・7依存）
+map `IfE48Ucs` のBot稼働状況 ・ 直近の変更（新しい順）:
+- 15:48:17 TaMap PM: 作業中（結果を統合中）
+- 15:48:17 Risk Analyst: 完了
+- 15:48:17 Quality Reviewer: エラー（T9参照を確認できず）
+- 15:48:17 Risk Analyst: 作業中（T4遅延の波及を分析中）
+- 15:48:17 Map Architect: 完了（7タスク・7依存）
 
 ---
 
@@ -348,7 +348,7 @@ graph LR
   class n5,n6 todo
   style n3 stroke:#7c2d12,stroke-width:4px,stroke-dasharray:6 3
 ```
-revision 3 ・ map_id `NlyCHoF3` ・ 更新 15:14:40 JST ・ 検証OK
+revision 3 ・ map_id `IfE48Ucs` ・ 更新 15:48:17 JST ・ 検証OK
 
 ---
 
@@ -380,19 +380,19 @@ graph LR
   class n3,n4,n5 todo
   style n3 stroke:#7c2d12,stroke-width:4px,stroke-dasharray:6 3
 ```
-revision 2 ・ map_id `Ui64FUzj` ・ 更新 15:14:40 JST ・ 検証OK
+revision 2 ・ map_id `ci2XWaSP` ・ 更新 15:48:17 JST ・ 検証OK
 
 ---
 
 ## render_flow_gif
 
-▶ 流れのGIF: `/tmp/tamap-e2e-9e3so_ey/out/NlyCHoF3_flow.gif`（約23秒・Bot履歴9件）
+▶ 流れのGIF: `/tmp/tamap-e2e-24slrox8/out/IfE48Ucs_flow.gif`（約23秒・Bot履歴9件）
 
 ---
 
 ## render_team_card
 
-▶ チーム紹介のGIF: `/tmp/tamap-e2e-9e3so_ey/out/tamap_team.gif`
+▶ チーム紹介のGIF: `/tmp/tamap-e2e-24slrox8/out/tamap_team.gif`
 
 ---
 
@@ -430,7 +430,7 @@ graph LR
   style n2 stroke:#7c2d12,stroke-width:4px,stroke-dasharray:6 3
   linkStyle 4,7,8 stroke:#ef4444,stroke-width:3px,stroke-dasharray:5 4
 ```
-revision 1 ・ map_id `iFRiM63W` ・ 更新 15:14:44 JST ・ 検証エラー3件
+revision 1 ・ map_id `j2vMgKly` ・ 更新 15:48:21 JST ・ 検証エラー3件
 
 ---
 
@@ -451,20 +451,26 @@ graph LR
   class n1 blocked
   style n1 stroke:#7c2d12,stroke-width:4px,stroke-dasharray:6 3
 ```
-revision 1 ・ map_id `OO9LkpAr` ・ 更新 15:14:44 JST ・ 検証OK
+revision 1 ・ map_id `6w9AOzey` ・ 更新 15:48:21 JST ・ 検証OK
 
 ---
 
 ## list_maps
 
-- `iFRiM63W` デモ用：不整合入りサンプル（Quality Reviewer検出デモ）（revision 1、更新 15:14:44 JST）
-- `OO9LkpAr` Q"uote <b> & |x| [y] `z` end（revision 1、更新 15:14:44 JST）
-- `Ui64FUzj` 合流点の片側が完了（revision 2、更新 15:14:40 JST）
-- `NlyCHoF3` タスク管理アプリ開発（README入力例）（revision 3、更新 15:14:40 JST）
+- `6w9AOzey` Q"uote <b> & |x| [y] `z` end（revision 1、更新 15:48:21 JST）
+- `j2vMgKly` デモ用：不整合入りサンプル（Quality Reviewer検出デモ）（revision 1、更新 15:48:21 JST）
+- `ci2XWaSP` 合流点の片側が完了（revision 2、更新 15:48:17 JST）
+- `IfE48Ucs` タスク管理アプリ開発（README入力例）（revision 3、更新 15:48:17 JST）
 
 ---
 
 ## parse_handoff（前置き・末尾カンマ・スマートクォート）
+
+Map Architect の返信を読み取りました（tasks 1件）。
+
+---
+
+## parse_handoff（bot 引数）
 
 Map Architect の返信を読み取りました（tasks 1件）。
 
@@ -475,10 +481,10 @@ Map Architect の返信を読み取りました（tasks 1件）。
 ```mermaid
 flowchart LR
   U(["ユーザー"])
-  PM["📋 TaMap PM<br>(-ω-)zz 待機<br>Map Architectの結果待ち<br>15:14:44 JST"]
-  MA["🗺️ Map Architect<br>(•ω•)✧ 作業中<br>「線、つなぐっす。」<br>線を確認<br>15:14:44 JST"]
-  RA["⚠️ Risk Analyst<br>(^ω^) 完了<br>15:14:40 JST"]
-  QR["✅ Quality Reviewer<br>(#gt;ω#lt;;) エラー<br>「読みきれなかった…ごめんね」<br>T9参照を確認できず<br>15:14:40 JST"]
+  PM["📋 TaMap PM<br>(-ω-)zz 待機<br>Map Architectの結果待ち<br>15:48:21 JST"]
+  MA["🗺️ Map Architect<br>(•ω•)✧ 作業中<br>「線、つなぐっす。」<br>線を確認<br>15:48:21 JST"]
+  RA["⚠️ Risk Analyst<br>(^ω^) 完了<br>「影響の先、見つけました！」<br>15:48:17 JST"]
+  QR["✅ Quality Reviewer<br>(#gt;ω#lt;;) エラー<br>「読みきれなかった…ごめんね」<br>T9参照を確認できず<br>15:48:17 JST"]
   U -- 依頼 --> PM
   PM -- 分解 --> MA
   MA -- 構造 --> RA
@@ -496,11 +502,81 @@ flowchart LR
   class QR error
   linkStyle 1 stroke:#2563eb,stroke-width:5px
 ```
-map `NlyCHoF3` のBot稼働状況 ・ 直近の変更（新しい順）:
-- 15:14:44 Map Architect: 作業中（線を確認）
-- 15:14:44 TaMap PM: 待機（Map Architectの結果待ち）
-- 15:14:40 TaMap PM: 完了
-- 15:14:40 TaMap PM: 作業中（結果を統合中）
-- 15:14:40 Risk Analyst: 完了
+map `IfE48Ucs` のBot稼働状況 ・ 直近の変更（新しい順）:
+- 15:48:21 Map Architect: 作業中（線を確認）
+- 15:48:21 TaMap PM: 待機（Map Architectの結果待ち）
+- 15:48:17 TaMap PM: 完了
+- 15:48:17 TaMap PM: 作業中（結果を統合中）
+- 15:48:17 Risk Analyst: 完了
+
+---
+
+## set_bot_status（完了でも say を稼働図に出す）
+
+```mermaid
+flowchart LR
+  U(["ユーザー"])
+  PM["📋 TaMap PM<br>(-ω-)zz 待機<br>Map Architectの結果待ち<br>15:48:21 JST"]
+  MA["🗺️ Map Architect<br>(•ω•)✧ 作業中<br>「線、つなぐっす。」<br>線を確認<br>15:48:21 JST"]
+  RA["⚠️ Risk Analyst<br>(^ω^) 完了<br>「先はT6とT7かも」<br>影響はT6・T7<br>15:48:21 JST"]
+  QR["✅ Quality Reviewer<br>(#gt;ω#lt;;) エラー<br>「読みきれなかった…ごめんね」<br>T9参照を確認できず<br>15:48:17 JST"]
+  U -- 依頼 --> PM
+  PM -- 分解 --> MA
+  MA -- 構造 --> RA
+  RA -- リスク --> QR
+  QR -- 検証結果 --> PM
+  classDef idle fill:#9ca3af,stroke:#4b5563,color:#111827
+  classDef working fill:#3b82f6,stroke:#1d4ed8,color:#ffffff
+  classDef done fill:#22c55e,stroke:#15803d,color:#ffffff
+  classDef error fill:#ef4444,stroke:#991b1b,color:#ffffff
+  classDef user fill:#ffffff,stroke:#4b5563,color:#111827
+  class U user
+  class PM idle
+  class MA working
+  class RA done
+  class QR error
+  linkStyle 1 stroke:#2563eb,stroke-width:5px
+```
+map `IfE48Ucs` のBot稼働状況 ・ 直近の変更（新しい順）:
+- 15:48:21 Risk Analyst: 完了（影響はT6・T7）
+- 15:48:21 Map Architect: 作業中（線を確認）
+- 15:48:21 TaMap PM: 待機（Map Architectの結果待ち）
+- 15:48:17 TaMap PM: 完了
+- 15:48:17 TaMap PM: 作業中（結果を統合中）
+
+---
+
+## set_bot_status（エラーでも say を稼働図に出す）
+
+```mermaid
+flowchart LR
+  U(["ユーザー"])
+  PM["📋 TaMap PM<br>(-ω-)zz 待機<br>Map Architectの結果待ち<br>15:48:21 JST"]
+  MA["🗺️ Map Architect<br>(•ω•)✧ 作業中<br>「線、つなぐっす。」<br>線を確認<br>15:48:21 JST"]
+  RA["⚠️ Risk Analyst<br>(^ω^) 完了<br>「先はT6とT7かも」<br>影響はT6・T7<br>15:48:21 JST"]
+  QR["✅ Quality Reviewer<br>(#gt;ω#lt;;) エラー<br>「ここ、直したいね」<br>60秒応答なし<br>15:48:21 JST"]
+  U -- 依頼 --> PM
+  PM -- 分解 --> MA
+  MA -- 構造 --> RA
+  RA -- リスク --> QR
+  QR -- 検証結果 --> PM
+  classDef idle fill:#9ca3af,stroke:#4b5563,color:#111827
+  classDef working fill:#3b82f6,stroke:#1d4ed8,color:#ffffff
+  classDef done fill:#22c55e,stroke:#15803d,color:#ffffff
+  classDef error fill:#ef4444,stroke:#991b1b,color:#ffffff
+  classDef user fill:#ffffff,stroke:#4b5563,color:#111827
+  class U user
+  class PM idle
+  class MA working
+  class RA done
+  class QR error
+  linkStyle 1 stroke:#2563eb,stroke-width:5px
+```
+map `IfE48Ucs` のBot稼働状況 ・ 直近の変更（新しい順）:
+- 15:48:21 Quality Reviewer: エラー（60秒応答なし）
+- 15:48:21 Risk Analyst: 完了（影響はT6・T7）
+- 15:48:21 Map Architect: 作業中（線を確認）
+- 15:48:21 TaMap PM: 待機（Map Architectの結果待ち）
+- 15:48:17 TaMap PM: 完了
 
 ---
