@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from . import core
+from .handoff import loads_lenient
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.environ.get("TAMAP_DATA_DIR", ROOT / "data" / "maps"))
@@ -258,37 +259,59 @@ def create_map(title: str, tasks: Any, analysis: Any = None, source: str = "unkn
     return map_
 
 
+def unchanged_message(revision: int) -> str:
+    return f"変更なし（revision {int(revision)} のまま）"
+
+
 def update_map(map_id: str, expected_revision: int, tasks: Any = None, analysis: Any = None,
                source: str = "unknown", title: str | None = None) -> dict:
+    """Replace tasks / analysis / title. A no-op after normalization does not bump revision.
+
+    expected_revision is still enforced: a stale caller is rejected even when the payload
+    would not change anything. The returned dict has unchanged=True only in memory; it is
+    not written to the map file.
+    """
     ana = normalize_analysis(analysis) if analysis is not None else None
+    new_title = str(title).strip() if title and str(title).strip() else None
     with _lock():
         map_ = read_map(map_id)
         if int(expected_revision) != int(map_["revision"]):
             raise RevisionConflict(map_id, int(expected_revision), int(map_["revision"]))
+        if tasks is None and ana is None and new_title is None:
+            raise StoreError("更新内容がありません（tasks / analysis / title のいずれかを指定してください）。")
+        draft = copy.deepcopy(map_)
+        if tasks is not None:
+            _apply_tasks(draft, tasks)
+        if ana is not None:
+            draft["analysis"] = ana
+        if new_title is not None:
+            draft["title"] = new_title
+        same = (draft["tasks"] == map_["tasks"] and draft.get("analysis") == map_.get("analysis")
+                and draft.get("title") == map_.get("title"))
+        if same:
+            out = copy.deepcopy(map_)
+            out["unchanged"] = True
+            return out
+        changed = []
+        if tasks is not None and draft["tasks"] != map_["tasks"]:
+            changed.append("tasks")
+        if ana is not None and draft.get("analysis") != map_.get("analysis"):
+            changed.append("analysis")
+        if new_title is not None and draft.get("title") != map_.get("title"):
+            changed.append("title")
         old = {k: copy.deepcopy(map_[k]) for k in ("revision", "title", "tasks", "validation", "graph")}
         old["analysis"] = copy.deepcopy(map_.get("analysis"))
-        changed = []
-        if tasks is not None:
-            _apply_tasks(map_, tasks)
-            changed.append("tasks")
-        if ana is not None:
-            map_["analysis"] = ana
-            changed.append("analysis")
-        if title and title.strip():
-            map_["title"] = title.strip()
-            changed.append("title")
-        if not changed:
-            raise StoreError("更新内容がありません（tasks / analysis / title のいずれかを指定してください）。")
-        map_["revision"] = int(map_["revision"]) + 1
-        map_["updated_at"] = now_iso()
-        map_["source"] = source
-        map_["last_diff"] = compute_diff(old, map_)
-        map_["history"].append({"revision": map_["revision"], "updated_at": map_["updated_at"],
-                                "source": source, "change": ",".join(changed),
-                                "diff": map_["last_diff"]["text"]})
-        map_["history"] = map_["history"][-HISTORY_LIMIT:]
-        _write(map_)
-    return map_
+        draft["revision"] = int(map_["revision"]) + 1
+        draft["updated_at"] = now_iso()
+        draft["source"] = source
+        draft["last_diff"] = compute_diff(old, draft)
+        draft["history"].append({"revision": draft["revision"], "updated_at": draft["updated_at"],
+                                 "source": source, "change": ",".join(changed),
+                                 "diff": draft["last_diff"]["text"]})
+        draft["history"] = draft["history"][-HISTORY_LIMIT:]
+        _write(draft)
+        draft["unchanged"] = False
+    return draft
 
 
 def list_maps() -> list[dict]:
@@ -316,12 +339,76 @@ BOT_NAMES = {"pm": "TaMap PM", "map_architect": "Map Architect", "risk_analyst":
              "quality_reviewer": "Quality Reviewer"}
 
 
+def _try_json_obj(s: str) -> dict | None:
+    try:
+        value = loads_lenient(s)
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _trailing_object(raw: str) -> tuple[str, dict] | None:
+    """If raw ends with a JSON object, return the text before it and that object."""
+    s = raw.rstrip()
+    if not s.endswith("}"):
+        return None
+    for i in range(len(s) - 1, -1, -1):
+        if s[i] != "{":
+            continue
+        obj = _try_json_obj(s[i:])
+        if isinstance(obj, dict):
+            return s[:i].strip(), obj
+    return None
+
+
+_SAY_SPLIT = re.compile(r"\s*[|｜]\s*say\s*[:：]\s*", re.IGNORECASE)
+
+
+def _extract_embedded_say(raw: str) -> tuple[str | None, str | None] | None:
+    """Pull say out of a note. None means the note is plain text and should be kept as-is."""
+    if raw.startswith("{") and raw.endswith("}"):
+        obj = _try_json_obj(raw)
+        if isinstance(obj, dict) and ("say" in obj or "note" in obj):
+            note = str(obj.get("note") or "").strip() or None
+            say = str(obj.get("say") or "").strip() or None
+            return note, say
+    trail = _trailing_object(raw)
+    if trail is not None and trail[0] and "say" in trail[1]:
+        prefix, obj = trail
+        say = str(obj.get("say") or "").strip() or None
+        note = prefix or (str(obj.get("note") or "").strip() or None)
+        if say:
+            return note, say
+    parts = _SAY_SPLIT.split(raw, maxsplit=1)
+    if len(parts) == 2:
+        return (parts[0].strip() or None), (parts[1].strip() or None)
+    return None
+
+
+def _note_and_say(note: str | None, say: str | None) -> tuple[str | None, str | None]:
+    """Accept say as its own argument, or embedded in note (cached tool schemas omit say).
+
+    Embedded forms: ``事実 ｜ say:一言`` (ASCII ``|`` and fullwidth colon too), a JSON object
+    ``{"note","say"}``, or a trailing ``{"say":"..."}``. An explicit say wins; the marker is
+    still removed from the factual note.
+    """
+    explicit = str(say).strip() if say is not None and str(say).strip() else None
+    if note is None or not str(note).strip():
+        return None, explicit
+    extracted = _extract_embedded_say(str(note).strip())
+    if extracted is None:
+        return str(note).strip(), explicit
+    emb_note, emb_say = extracted
+    return emb_note, explicit or emb_say
+
+
 def set_bot_status(map_id: str, bot: str, status: str, note: str | None = None, say: str | None = None) -> dict:
     """Record a bot's activity state on a map. Does not bump the map revision (operational data).
 
     Only one bot lights up at a time: when a specialist becomes `working`, a working PM is put back
     to `idle` (note「<Bot>の結果待ち」) and that is recorded in bot_history too.
     `say` is an optional in-character one-liner shown in the flow GIF speech bubble (note stays factual).
+    When the client schema has no say argument, put it in note: 「事実 ｜ say:一言」 or {"note","say"}.
     """
     key = (bot or "").strip().lower().replace(" ", "_").replace("-", "_")
     key = BOT_ALIASES.get(key, key)
@@ -330,6 +417,7 @@ def set_bot_status(map_id: str, bot: str, status: str, note: str | None = None, 
     st = (status or "").strip().lower()
     if st not in BOT_STATUSES:
         raise StoreError(f"status は {' / '.join(BOT_STATUSES)} のいずれかです（{status!r}）。")
+    note, say = _note_and_say(note, say)
     note = (note or "").strip()[:200] or None
     say = (say or "").strip()[:SAY_LIMIT] or None
     with _lock():

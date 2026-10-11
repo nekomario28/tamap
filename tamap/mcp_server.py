@@ -13,19 +13,23 @@ from mcp.types import CallToolResult, TextContent
 
 import urllib.request
 
-from . import animate, core, live, persona, render, store
+from . import animate, core, handoff, live, persona, render, store
 
 mcp = FastMCP(
     "tamap",
     instructions=(
         "TaMap: task dependency map. create_map registers tasks and returns a mermaid graph to paste into the chat "
-        "as-is. update_map needs expected_revision (stale updates are rejected). get_map shows the current state, "
+        "as-is. update_map needs expected_revision (stale updates are rejected, even for an identical payload). "
+        "If tasks, analysis and title are the same after normalization, revision stays put "
+        "(unchanged: true, chat line 変更なし（revision N のまま）). get_map shows the current state, "
         "simulate_delay shows which tasks a delay would reach (read-only), list_maps lists maps. "
         "set_bot_status records pm/map_architect/risk_analyst/quality_reviewer as idle/working/done/error "
         "(a specialist going working puts the PM back to idle automatically); record it at each hand-off but do "
-        "not post the flowchart except on errors or when the user asks (get_status). render_flow_gif replays the "
-        "last cycle as out/<map_id>_flow.gif to attach to the result message; the bots appear as pixel characters and "
-        "set_bot_status(say=...) is their speech bubble. render_team_card makes out/tamap_team.gif for the greeting. "
+        "not post the flowchart except on errors or when the user asks (get_status). say is the speech bubble; "
+        "if the tool schema has no say argument, embed it in note as '事実 ｜ say:一言' or {\"note\",\"say\"}. "
+        "render_flow_gif replays the last cycle as out/<map_id>_flow.gif to attach to the result message; the bots "
+        "appear as pixel characters. render_team_card makes out/tamap_team.gif for the greeting. "
+        "parse_handoff reads a specialist's plain-text reply (prose, ```json fences, trailing commas, smart quotes). "
         "get_live_url gives an optional read-only live page (scripts/live_view.sh) where the bots move in real time. "
         "Task status: done/in_progress/todo/blocked. Validation (duplicate ids, unknown references, cycles) is "
         "computed by deterministic code; do not override it in prose. Optional analysis = {pm:{summary, actions"
@@ -79,13 +83,18 @@ def update_map(map_id: str, expected_revision: int, tasks: list[dict] | None = N
     """Update a map (tasks replaces the whole list; analysis replaces the whole analysis).
 
     Text result = one diff line (変更点 ／ ボトルネック ／ 影響先) + mermaid graph + revision line; the same
-    diff is in structuredContent.diff. Rejected with revision_conflict if expected_revision != current
-    revision: call get_map and retry.
+    diff is in structuredContent.diff. If tasks, analysis and title are identical after normalization, revision
+    is left unchanged: the text starts with 「変更なし（revision N のまま）」 and structuredContent.unchanged is true.
+    Rejected with revision_conflict if expected_revision != current revision, even when the payload is a no-op:
+    call get_map and retry. Do not tell the user the revision increased unless unchanged is false.
     """
     try:
         m = store.update_map(map_id, expected_revision, tasks, analysis, source, title)
+        if m.get("unchanged"):
+            note = store.unchanged_message(m["revision"])
+            return _ok(f"{note}\n\n" + render.render_map(m), **_meta(m), unchanged=True, note=note, diff=None)
         diff = m.get("last_diff")
-        return _ok(render.render_map(m, diff=diff), **_meta(m), diff=diff)
+        return _ok(render.render_map(m, diff=diff), **_meta(m), diff=diff, unchanged=False)
     except Exception as e:  # noqa: BLE001
         return _fail(e)
 
@@ -136,7 +145,9 @@ def set_bot_status(map_id: str, bot: str, status: str, note: str | None = None,
 
     bot: pm | map_architect | risk_analyst | quality_reviewer
     status: idle | working | done | error     note: short factual text (optional)
-    say: optional in-character one-liner (<=30 chars) for the flow GIF speech bubble
+    say: optional in-character one-liner (<=30 chars) for the flow GIF speech bubble.
+    If this schema has no say parameter (a host cached the tool list from before say existed), put it in note:
+    "受付 ｜ say:まかせてください！" or {"note":"受付","say":"まかせてください！"}. An explicit say wins.
     When a non-pm bot becomes working, pm is set to idle (note「<Bot>の結果待ち」) automatically.
     Does not change the map revision. Post the flowchart only on errors (the result uses the flow GIF).
     """
@@ -145,6 +156,29 @@ def set_bot_status(map_id: str, bot: str, status: str, note: str | None = None,
         return _ok(render.render_status(m), map_id=map_id, bots=m["bots"], bot_history=m["bot_history"][-5:])
     except Exception as e:  # noqa: BLE001
         return _fail(e)
+
+
+@mcp.tool()
+def parse_handoff(text: str, role: str | None = None) -> CallToolResult:
+    """Extract one JSON object from a specialist bot's plain-text reply.
+
+    Tolerates surrounding prose, a ```json fence, trailing commas, and smart quotes (“ ”).
+    role: map_architect | risk_analyst | quality_reviewer (optional). When set, checks the fields that
+    bot should return and explains what is missing. Text result is one line; the object is structuredContent.data.
+    Do not paste this line into the user-facing result — use data.
+    """
+    try:
+        parsed = handoff.parse_reply(text, role)
+    except handoff.HandoffError as e:
+        hint = f"\nヒント: {e.hint}" if e.hint else ""
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"エラー: {e}{hint}")],
+            structuredContent={"ok": False, "error": str(e), "hint": e.hint},
+            isError=True)
+    except Exception as e:  # noqa: BLE001
+        return _fail(e)
+    return _ok(handoff.summary_line(parsed), ok=True, role=parsed["role"], data=parsed["data"],
+               say=parsed["data"].get("say"), warnings=parsed["warnings"])
 
 
 @mcp.tool()

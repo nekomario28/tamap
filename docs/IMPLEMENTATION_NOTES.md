@@ -17,7 +17,8 @@ README はチャット内完結の方式に書き換え済み（UX_DESIGN P7）�
 | パス | 役割 |
 | --- | --- |
 | `tamap/core.py` | 検証（重複ID / 存在しない参照 / 自己依存 / 循環 / 不正status）、遅延影響（到達可能な後続）、下流タスク数・合流点・ボトルネック候補・クリティカルパス候補。LLM不使用、標準ライブラリのみ |
-| `tamap/store.py` | 共有ストア `data/maps/{map_id}.json`（`TAMAP_DATA_DIR` で変更可）。fcntlロック＋アトミック書き込み。`update_map` は `expected_revision` 不一致を拒否。Bot状態（`bots`, `bot_history` 直近30件）も同じファイルに保持 |
+| `tamap/store.py` | 共有ストア `data/maps/{map_id}.json`（`TAMAP_DATA_DIR` で変更可）。fcntlロック＋アトミック書き込み。`update_map` は `expected_revision` 不一致を拒否し、正規化後に同じ内容なら revision を上げない。Bot状態（`bots`, `bot_history` 直近30件）も同じファイルに保持。`say` は引数か、`note` の `｜ say:` / JSON から読む |
+| `tamap/handoff.py` | 専門Botのプレーンテキスト返信から JSON を読む（`parse_handoff`）。前置き、コードフェンス、末尾カンマ、スマートクォートを除き、role ごとの不足をエラーにする |
 | `tamap/render.py` | mermaid 生成（タスクマップ `graph LR`／Bot稼働 `flowchart LR`）。ラベル中の `" < > & `` ` は mermaid のエンティティコードでエスケープ |
 | `tamap/animate.py` | 流れのGIF（Pillow）。`bot_history` の直近1周から `out/{map_id}_flow.gif`（`TAMAP_OUT_DIR` で変更可）。作業中のBotだけ光る、依頼=青／結果=黄の封筒、最後にボトルネックからの影響の広がりと3アクション、QRバッジ（件数は `analysis.quality.items`） |
 | `tamap/persona.py` / `tamap/sprites.py` | 4 体のキャラクター（役割・色・モチーフ・口調・状態の顔文字）と、レトロなドット絵（16×14 の格子＋小物）。GIF・稼働図 mermaid・指示文で共通に使う |
@@ -35,11 +36,12 @@ README はチャット内完結の方式に書き換え済み（UX_DESIGN P7）�
 | ツール | 内容 | revision |
 | --- | --- | --- |
 | `create_map(title, tasks, analysis?, source?)` | 新規作成。検証エラーがあっても保存し、図の中で赤く示す | 1 |
-| `update_map(map_id, expected_revision, tasks?, analysis?, source?, title?)` | tasks / analysis は全体置換。図の上に差分の1行（変更点 ／ ボトルネック ／ 影響先）、structuredContent に `diff`。古い revision は `revision_conflict`（isError）で拒否 | +1 |
+| `update_map(map_id, expected_revision, tasks?, analysis?, source?, title?)` | tasks / analysis / title は全体置換。正規化後に同じなら書き換えず「変更なし（revision N のまま）」、`unchanged: true`。変わったときだけ差分の1行と `diff`。古い revision は中身が同じでも `revision_conflict`（isError）で拒否 | 変わったときだけ +1 |
 | `get_map(map_id)` | 現在の図。structuredContent に tasks と analysis | 不変 |
 | `simulate_delay(map_id, task_id)` | what-if。遅延元を太枠、影響タスクとそのエッジを黄色。保存しない | 不変 |
 | `list_maps()` | map_id 一覧（短い箇条書き） | - |
-| `set_bot_status(map_id, bot, status, note?, say?)` | bot: pm / map_architect / risk_analyst / quality_reviewer、status: idle / working / done / error。稼働図を返す。専門Botが working になると pm を自動で idle（「〜の結果待ち」）にし、履歴にも残す。`say` はふきだしの一言（30文字まで） | 不変 |
+| `set_bot_status(map_id, bot, status, note?, say?)` | bot: pm / map_architect / risk_analyst / quality_reviewer、status: idle / working / done / error。稼働図を返す。専門Botが working になると pm を自動で idle（「〜の結果待ち」）にし、履歴にも残す。`say` はふきだしの一言（30文字まで）。引数が無いクライアント向けに、`note` の `｜ say:` と `{"note","say"}` も読む | 不変 |
+| `parse_handoff(text, role?)` | 専門Botの返信テキストから JSON オブジェクトを1つ取り出す。role を付けると Map Architect / Risk Analyst / Quality Reviewer の形を検査する | - |
 | `render_flow_gif(map_id)` | 直近1周の流れを GIF に書き出し、パスを返す（キャラのふきだしは `set_bot_status` の `say`、無ければ口ぐせ） | 不変 |
 | `render_team_card()` | 4 体のチーム紹介の GIF（`out/tamap_team.gif`） | - |
 | `get_live_url(map_id)` | ライブページの URL と、ライブページのサーバーが起動しているか（`running`） | 不変 |
@@ -69,11 +71,17 @@ README はチャット内完結の方式に書き換え済み（UX_DESIGN P7）�
   - 影響先＝いずれかのボトルネックの下流にある未完了タスクすべて（別のボトルネックの下流にあるボトルネックも含む）。
   - 一覧から外れたタスクには理由を括弧で添える（例：`ボトルネック：T3→T4（T3は完了） ／ 影響先：T4・T5・T6→T5・T6（T4はボトルネックに）`）。理由は「完了」「削除」「ボトルネックに」「ボトルネックの下流から外れた」の4つ。ボトルネックがスコアの変化だけで外れたときは理由を付けない。
 
+## 追加で確認したこと（実機4ボットの不具合、開発VM、2026-10-11）
+
+- `uv run python -m unittest tests.test_core tests.test_handoff` → 26件 OK。内容が同じ `update_map` はファイルを書き換えず revision を維持する。`expected_revision` が違うときは中身が同じでも拒否する。`note` の `｜ say:`・JSON・スマートクォートから `say` を読む。`parse_handoff` はフェンス・前置き・末尾カンマ・スマートクォートを除き、壊れた最後のフェンスを手前の例で埋め合わせない。
+- `uv run python tests/e2e_mcp.py` → 94項目 PASS。stdio の `update_map` が「変更なし（revision N のまま）」と `unchanged: true` を返すこと、`parse_handoff`、`note` に埋め込んだ `say`、`tamap_cli.sh set_bot_status` の同じ経路を含む。
+- Grok Bot 上の4体でもう一度1周した確認はしていない。
+
 ## 未確認
 
 - **Grok Bot から この MCP サーバーを実際に登録・呼び出しできるか**（README 0:00–0:30 の疎通試験そのもの）。
 - Grok Bot のチャットの mermaid のバージョン（classDef / linkStyle / style / 破線・太線 / `<br>` の描画は P0 で確認済み）。エンティティコード（`#quot;` など）の描画は個別には未確認。
-- 4 Bot 連携・再分析は未実施（指示文の案は `docs/GROKBOT_INTEGRATION.md`）。
+- 4 Bot 連携は実機で1周し、この節の直前に書いた3件（無変更の revision、Bot間 JSON、`say` の古いスキーマ）が出た。この修正のあとの再実行は未確認（指示文は `docs/GROKBOT_INTEGRATION.md`）。
 - `render_flow_gif` が box 上で作った GIF を Grok Bot で添付・再生できるか、box に日本語フォントがあるか。
 - ライブページ：Grok Bot の box で常駐させられるか、box の中のブラウザで開けるか、外部への公開（`docs/LIVE_VIEW.md` の選択肢はすべて未実施）。
 - 書き込みの認証：stdio MCP を起動できる＝box にアクセスできる人だけが書ける、という境界のみ。トークン認証は無し。

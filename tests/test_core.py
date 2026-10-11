@@ -141,6 +141,93 @@ class StoreTest(unittest.TestCase):
                          ["ボトルネック：変化なし（T1）",
                           "影響先：T2・T3→T4（T2はボトルネックの下流から外れた、T3は削除）"])
 
+    def test_noop_update_keeps_revision(self):
+        mid = self.m["map_id"]
+        path = store._path(mid)
+        before = path.read_bytes()
+        stored = json.loads(before)
+        incoming = []
+        for t in stored["tasks"]:
+            t = dict(t)
+            t["priority"] = 1  # dropped by normalization
+            t["title"] = f"  {t['title']}  "
+            if t["status"] == "done":
+                t["status"] = "完了"
+            if t["depends_on"]:
+                t["depends_on"] = "、".join(f" {d} " for d in t["depends_on"])
+            incoming.append(t)
+        m = store.update_map(mid, "1", incoming, analysis={"assumptions": []}, title="  t  ", source="same again")
+        self.assertTrue(m["unchanged"])
+        self.assertEqual(m["revision"], 1)
+        self.assertEqual(m["source"], "unknown")
+        self.assertEqual(m["updated_at"], stored["updated_at"])
+        self.assertEqual(len(m["history"]), 1)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertNotIn("unchanged", json.loads(path.read_text()))
+        # A real change still bumps, and a second identical call does not.
+        blocked = [dict(t, status="blocked") if t["id"] == "T4" else t for t in stored["tasks"]]
+        m = store.update_map(mid, 1, blocked, source="block T4")
+        self.assertFalse(m["unchanged"])
+        self.assertEqual(m["revision"], 2)
+        self.assertEqual(m["source"], "block T4")
+        again = store.update_map(mid, 2, blocked, source="block T4 again")
+        self.assertTrue(again["unchanged"])
+        self.assertEqual(again["revision"], 2)
+        self.assertEqual(store.read_map(mid)["source"], "block T4")
+        # Stale expected_revision is rejected even when the payload matches the current map.
+        with self.assertRaises(store.RevisionConflict):
+            store.update_map(mid, 1, blocked)
+        self.assertEqual(store.read_map(mid)["revision"], 2)
+        with self.assertRaises(store.StoreError):
+            store.update_map(mid, 2)
+
+    def test_noop_analysis_and_title_only_change(self):
+        mid = self.m["map_id"]
+        m = store.update_map(mid, 1, analysis={"pm": {"summary": "s", "actions": ["やる"]}})
+        self.assertEqual(m["revision"], 2)
+        m = store.update_map(mid, 2, analysis={"pm": {"summary": " s ", "actions": [{"text": "やる"}]}})
+        self.assertTrue(m["unchanged"])
+        self.assertEqual(m["revision"], 2)
+        m = store.update_map(mid, 2, title="新しい名前")
+        self.assertFalse(m["unchanged"])
+        self.assertEqual(m["revision"], 3)
+        self.assertIn("タイトルのみ更新", m["last_diff"]["text"])
+        reordered = list(reversed(store.read_map(mid)["tasks"]))
+        m = store.update_map(mid, 3, reordered)
+        self.assertFalse(m["unchanged"])
+        self.assertEqual(m["revision"], 4)
+
+    def test_say_embedded_in_note(self):
+        mid = self.m["map_id"]
+        m = store.set_bot_status(mid, "pm", "working", "受付 ｜ say:まかせてください！")
+        self.assertEqual(m["bots"]["pm"]["note"], "受付")
+        self.assertEqual(m["bots"]["pm"]["say"], "まかせてください！")
+        m = store.set_bot_status(mid, "map_architect", "working", "分解中 | say：線、つなぐっす。")
+        self.assertEqual(m["bots"]["map_architect"]["note"], "分解中")
+        self.assertEqual(m["bots"]["map_architect"]["say"], "線、つなぐっす。")
+        # Explicit say wins, and the embedded marker is still stripped from the factual note.
+        m = store.set_bot_status(mid, "pm", "done", "まとめた ｜ say:まちがい", say="まとまりました！")
+        self.assertEqual(m["bots"]["pm"]["note"], "まとめた")
+        self.assertEqual(m["bots"]["pm"]["say"], "まとまりました！")
+        m = store.set_bot_status(mid, "risk_analyst", "working",
+                                 '{"note": "T4を見ている", "say": "ここ、あやしいかも…",}')
+        self.assertEqual(m["bots"]["risk_analyst"]["note"], "T4を見ている")
+        self.assertEqual(m["bots"]["risk_analyst"]["say"], "ここ、あやしいかも…")
+        m = store.set_bot_status(mid, "quality_reviewer", "done",
+                                 '{"note":“検査した”,"say":“ちょっとだけ直すね”}')
+        self.assertEqual(m["bots"]["quality_reviewer"]["note"], "検査した")
+        self.assertEqual(m["bots"]["quality_reviewer"]["say"], "ちょっとだけ直すね")
+        m = store.set_bot_status(mid, "quality_reviewer", "working", '赤ペン {"say": "見るね"}')
+        self.assertEqual(m["bots"]["quality_reviewer"]["note"], "赤ペン")
+        self.assertEqual(m["bots"]["quality_reviewer"]["say"], "見るね")
+        m = store.set_bot_status(mid, "pm", "idle", "A | B の確認")
+        self.assertEqual(m["bots"]["pm"]["note"], "A | B の確認")
+        self.assertNotIn("say", m["bots"]["pm"])
+        long = "あ" * 40
+        m = store.set_bot_status(mid, "pm", "working", f"受付 ｜ say:{long}")
+        self.assertEqual(m["bots"]["pm"]["say"], "あ" * store.SAY_LIMIT)
+        self.assertEqual(m["bots"]["pm"]["note"], "受付")
+
     def test_quality_items_keep_before(self):
         a = store.normalize_analysis({"quality": {"items": [
             {"before": "原因はDB設計", "text": "原因はDB設計の可能性あり（推定）", "reason": "断定しすぎ"},

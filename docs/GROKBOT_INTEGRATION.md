@@ -82,7 +82,42 @@ flowchart LR
 - **書き込むのは PM だけ**。`create_map`／`update_map` を呼ぶのは PM 1 体にする。こうすると revision の競合が起きにくく、UX の「投稿は 2 つ」も PM だけで守れる。専門Botは JSON を PM に返すだけ。
 - **Bot の状態の記録も PM がする**。依頼を送る直前に `set_bot_status(<専門Bot>, working)` を呼ぶ。このときコード側で PM が自動的に待機（「〜の結果待ち」）になる（P2）。返信を受けたら `set_bot_status(<専門Bot>, done)` を呼ぶ。こうすると、GIF の「PM→専門Bot（青い封筒）→PM（黄色い封筒）」の流れと、記録の順番が一致する。
   - 別案：専門Bot自身が `set_bot_status` を呼ぶ。時刻は正確になるが、3 体すべてにツールを持たせる必要がある。PM 側の記録と二重にならないよう、どちらか一方に決める。
-- **中身の大きいデータは共有ファイルで渡してもよい**（【前提】の共有 box を使う）。例：MA が `data/handoff/<map_id>/map_architect.json` に書き、メッセージでは「書きました：<パス>」と伝える。メッセージの長さの上限や、メッセージの中で JSON が崩れないかは【未確認】なので、まずはメッセージ本文の JSON で試し、崩れたらファイル渡しに切り替える。
+- **中身の大きいデータは共有ファイルで渡してもよい**（【前提】の共有 box を使う）。例：MA が `data/handoff/<map_id>/map_architect.json` に書き、メッセージでは「書きました：<パス>」と伝える。まずは 2.1 のプレーンテキスト＋フェンスで渡し、メッセージが長すぎるときだけファイル渡しに切り替える。
+
+### 2.1 依頼と返信の形（プレーンテキスト＋フェンス）
+
+Bot 間のメッセージはプレーンテキストである（【前提】）。メッセージ全体を JSON にしてはいけない。実機では、PM が Quality Reviewer への依頼を JSON のまま送ろうとして、整形エラーで1回送れなかった。外側は文章、中身の構造化データはフェンス1つ、に分ける。
+
+PM → 専門Bot（依頼）:
+
+````text
+Map Architect へ。次の文章をタスクに分解してください。ID が書いてあればそれを使い、無ければ T1 から振ってください。
+
+```json
+{"instruction": "…ユーザーの文章…", "map_id": "JbeSRnxW", "tasks": []}
+```
+````
+
+- 最初の文字は `{` にしない。日本語の依頼文から始める。
+- ` ```json ` フェンスは1つだけ。フェンスの外に JSON を重ねない。
+- 改行や引用符はフェンスの中に置く。シェル引数のように外側でエスケープしない。
+
+専門Bot → PM（返信）:
+
+````text
+地図、できたっす！
+
+```json
+{"title": "…", "tasks": [], "say": "地図、できたっす！"}
+```
+````
+
+- フェンスは1つ。前に一言までなら書いてよい（`parse_handoff` が捨てる）。
+- 末尾カンマや曲がった引用符（“ ”）が混ざっても、PM は自分で直さず `parse_handoff(text, role)` に本文をそのまま渡す。
+- 成功したら `structuredContent.data` を使う。このツールの1行はユーザーには貼らない。
+- 失敗したら、返ってきたエラーとヒントを添えて、そのBotに1回だけ送り直す。
+
+`parse_handoff` は `tamap/handoff.py` と MCP ツール（`scripts/tamap_cli.sh parse_handoff` でも同じ）である。role は `map_architect` / `risk_analyst` / `quality_reviewer`。
 - **待ち時間**：UX は「60 秒応答なしでエラー表示」を前提にしている。しかし PM が teammate の返信を同じターンの中で待てるのか、それとも返信が別のターンとして届くのかは【未確認】。返信が別のターンとして届く場合は、PM は依頼を出したらいったんターンを終え、返信のたびに次の依頼を出す（状態は map の `bots` に残っているので、PM のメモリだけに頼らない）。
 
 ### 別案：数珠つなぎ（PM → MA → RA → QR → PM）
@@ -104,7 +139,7 @@ flowchart LR
     - ブロック中のタスクがある。
     - 最終更新から 24 時間以上たっている。
   - 条件に当てはまる map についてだけ、1 行と［チームで再分析］［T4が遅れたら？］のボタンを投稿する。
-  - routine からは `update_map` を呼ばない（入力に変化がないのに revision を上げない）。
+  - routine からは `update_map` を呼ばない。サーバー側でも、正規化のあとで tasks / analysis / title が同じ `update_map` は revision を上げない（7.1）。
   - 未確認の点：routine の実行がチャットに投稿できるか、どの会話に投稿されるか、ボタンを付けられるか、MCP やシェルを使えるか。すべて【未確認】。
 
 ## 3.5 キャラクター（4 体の個性と「かわいさ」）
@@ -161,7 +196,10 @@ flowchart LR
 **確認済み**
 - 【P0】Grok Bot のチャットで mermaid（classDef・linkStyle・style・破線/太線・`<br>`）が描画される。アニメーション GIF の添付が再生される。
 - 【開発VM】
-  - 全ツールの入出力（e2e 83 項目）。ライブページ（読み取り専用、SSE、headless Chrome でのドット絵の一致）。
+  - 全ツールの入出力（e2e 94 項目）。ライブページ（読み取り専用、SSE、headless Chrome でのドット絵の一致）。
+  - 内容が同じ `update_map` は revision を上げない（`unchanged: true`、本文「変更なし（revision N のまま）」）。`expected_revision` が違うときは、中身が同じでも拒否する（unittest・e2e）。
+  - `parse_handoff` が、前置き・json のコードフェンス・末尾カンマ・スマートクォートを除いて専門Botの JSON を読む。足りない項目はエラー文で返す（unittest・e2e）。
+  - `set_bot_status` の `note` に `｜ say:一言` または `{"note","say"}` と書くと、`say` 引数が無くてもふきだしの一言になる（unittest・e2e。`tamap_cli.sh` でも同じ）。
   - 専門Botが作業中になると PM が自動で待機になること（P2）。
   - 差分の 1 行と `diff`（P3）。
   - `before` が保存されること（P4）。
@@ -172,7 +210,8 @@ flowchart LR
 - Grok Bot に stdio MCP として登録し、呼び出せるか（案A）。
 - Grok Bot のシェルから `tamap_cli.sh` を呼べるか。標準出力と標準エラー出力を分けて読めるか（案B）。
 - PM が teammate の返信を同じターンの中で待てるか。60 秒のタイムアウトを実装できるか。
-- teammate へのメッセージで JSON が崩れないか。長さの上限。
+- teammate へのメッセージが、Grok Bot 上で 2.1 の形のまま届くか。長さの上限。`parse_handoff` の修復そのものは開発VMで確認済みだが、実機の4体でもう一度1周したわけではない。
+- 接続側が古いツール一覧のままのとき、PM が `note` の `｜ say:` を実際に付けるか。サーバーは受け取れる（開発VM）。ホストがツール一覧を更新したあとも `say` 引数が使えるかは、その接続の再読込待ち。
 - box 上の GIF ファイルを Bot が添付できるか。box の日本語フォント。
 - Grok Bot のチャットの mermaid で、絵文字と顔文字が崩れないか。
 - ライブページ：box で常駐させられるか、ユーザーがどこで開けるか（外部への公開の選択肢は docs/LIVE_VIEW.md にあり、すべて未実施）。
@@ -200,23 +239,33 @@ flowchart LR
 4. 結果の最後には必ず質問ウィジェットを付ける：「T4が遅れたら？」「T3を完了にする」「チームで再分析」「流れをGIFでもう一度」「Botの状態を見る」（T番号は、その時点のボトルネックと進行中のタスクに合わせる。最大6個）。
 5. Botの推定には「（推定）」を付ける。影響先・合流点・循環・存在しない参照は TaMap Core の計算なので、印を付けない。入力に無い日数・確率は書かない（「未確認」とまとめる）。
 
+■ 専門Botとのメッセージ（プレーンテキスト）
+Bot間のメッセージはプレーンテキストです。メッセージ全体を JSON にしないでください（最初の文字を { にしない）。依頼は日本語の説明のあとに、```json フェンスを1つだけ付けます（docs/GROKBOT_INTEGRATION.md の 2.1）。
+返信が来たら、本文をそのまま parse_handoff(text, role) に渡します（role は map_architect / risk_analyst / quality_reviewer）。成功したら structuredContent.data を使います。このツールの文面はユーザーに貼りません。失敗したら、エラーの文を添えてそのBotに1回だけ送り直します。それでもダメなら、そのBotをエラーにして UX_DESIGN 6章のボタンを出します。
+
+■ say 引数がツール一覧に無いとき
+set_bot_status の引数に say が無い（接続側が古いスキーマを覚えている）ときは、note に埋め込みます。
+例: note="受付 ｜ say:まかせてください！"
+または note="{\"note\":\"受付\",\"say\":\"まかせてください！\"}"
+say 引数があるときは、今までどおり say= で渡してよいです。詳しくはこのファイルの 7.3。
+
 ■ 分析の流れ（1周）
 1. 入力チェック。聞き返しは最大1回：タスクが2件未満 → 書き足しを頼み、［サンプル（タスク管理アプリ T1〜T7）で試す］のボタンを出す。依存が1つも無い → ［順番どおりに依存させる（推定）］［依存なしとして分析する］［書き足す（自由入力）］。状態が無い → 未着手とみなす（聞かない）。矛盾 → 聞かずに仮置きし、結論の下に ⚠️ の1行を書き、戻すボタンを付ける。
 2. 開始の1行を投稿する（UX_DESIGN 4.1 の文面）。
 3. create_map（新規）または update_map（既存）で map_id と revision を決める。map_id はメモリに残す。
-4. set_bot_status(map_id, pm, working, "受付", say="まかせてください！") を呼ぶ。
-5. 各専門Botについて順番に（Map Architect → Risk Analyst → Quality Reviewer）：set_bot_status(map_id, <bot>, working, <短い内容>) を呼んでから依頼を送る（PM はツール側で自動的に待機になる）。返信を受けたら set_bot_status(map_id, <bot>, done, <短い結果>, say=<返信の say>) を呼ぶ（say は GIF のふきだしになる。note は事実だけ）。
-   - Map Architect の tasks で update_map する。
-   - Risk Analyst には map_id を渡す。
+4. set_bot_status で pm を working にする。note は「受付 ｜ say:まかせてください！」（say 引数が使えるなら note="受付", say="まかせてください！" でもよい）。
+5. 各専門Botについて順番に（Map Architect → Risk Analyst → Quality Reviewer）：set_bot_status(map_id, <bot>, working, note="<短い内容> ｜ say:<口ぐせ>") を呼んでから、2.1 の形で依頼を送る（PM はツール側で自動的に待機になる）。返信は parse_handoff で読む。読めたら set_bot_status(map_id, <bot>, done, note="<短い結果> ｜ say:<data.say>") を呼ぶ（say は GIF のふきだしになる。note は事実だけ）。
+   - Map Architect の tasks で update_map する。structuredContent.unchanged が true なら revision はそのまま。ユーザーに rev が上がったとは書かない。
+   - Risk Analyst には map_id を渡す。影響先はツールの計算を使い、自分で足さない、と依頼に書く。
    - Quality Reviewer には、あなたが書いた3アクションの案と Risk Analyst の結果を渡す。
-6. set_bot_status(map_id, pm, working, "統合") を呼ぶ。update_map(expected_revision=現在の revision, analysis={pm:{summary, actions(最大3)}, risk:{summary, items}, quality:{summary, items:[{before, text, reason}]}, assumptions:[...]}) を呼ぶ。続けて set_bot_status(map_id, pm, done) を呼ぶ。
+6. set_bot_status(map_id, pm, working, note="統合 ｜ say:まとまりました！") を呼ぶ。update_map(expected_revision=現在の revision, analysis={pm:{summary, actions(最大3)}, risk:{summary, items}, quality:{summary, items:[{before, text, reason}]}, assumptions:[...]}) を呼ぶ。戻り値の revision を使う。自分で +1 しない。unchanged が true のときは、結果に「rev N → N+1」と書かない。続けて set_bot_status(map_id, pm, done) を呼ぶ。
 7. render_flow_gif(map_id) を呼び、返された gif_path のファイルを結果の投稿に添付する。失敗したら、GIF の行を「GIFは作れませんでした（［流れをGIFでもう一度］で再試行）」にして、結果はそのまま出す。
 
 ■ ボタンの文 → すること（専門Botは回さない「軽い経路」）
 - 「サンプル（タスク管理アプリ T1〜T7）で試す」→ /workspace/tamap/samples/readme_example.json の内容を入力として、分析の流れを1周する。
 - 「わざと矛盾を入れたサンプルで試す」→ samples/broken_example.json の内容で1周する。
 - 「T◯が遅れたら？」→ simulate_delay(map_id, "T◯") を1回呼ぶだけ。結論1文＋図＋「何日遅れるかは工数が未入力のため計算していません（未確認）」＋ボタン。保存しない。
-- 「T◯を完了にする」「T◯を進行中にする」など状態の変更 → get_map で tasks を読み、その1件だけ変えて update_map(expected_revision=現在の revision) を呼ぶ。返ってきた1行目（変更点：… ／ ボトルネック：… ／ 影響先：…）と図を貼り、上に「**rev N → N+1 に更新：…**」の1文を書く。
+- 「T◯を完了にする」「T◯を進行中にする」など状態の変更 → get_map で tasks を読み、その1件だけ変えて update_map(expected_revision=現在の revision) を呼ぶ。本文が「変更なし（revision N のまま）」で始まっていたら、rev は上がっていない。その1行と図を貼り、「rev N → N+1」とは書かない。変わっていたら、1行目（変更点：… ／ ボトルネック：… ／ 影響先：…）と図を貼り、上に「**rev N → N+1 に更新：…**」の1文を書く。N と N+1 は戻り値の revision から取る。
 - 「チームで再分析」→ 分析の流れを1周する（投稿は2つ）。
 - 「流れをGIFで見る」「流れをGIFでもう一度」→ render_flow_gif を呼んで添付する。
 - 「Botの状態を見る」→ get_status の稼働図をそのまま貼る。
@@ -237,7 +286,7 @@ flowchart LR
 - 入力に無い日数・工数・担当者は作らない。
 - 矛盾（例：「未着手」なのに「止まっている」）は、より強いほう（blocked）で仮置きし、contradictions に書く。
 - 検証（循環・存在しない参照・重複）は TaMap Core が行うので、あなたは直さずにそのまま返してよい。
-返信は次の JSON の1ブロックだけにする（前置き・長文は書かない）：
+返信はプレーンテキストにする。メッセージ全体を JSON にしない。次のオブジェクトを ```json フェンスでちょうど1つ囲む。フェンスの前に一言までなら書いてよい。フェンスの外に JSON は書かない。PM が parse_handoff で読む：
 ```json
 {"title": "…", "tasks": [{"id": "T1", "title": "要件整理", "status": "done", "depends_on": []}],
  "ids_assigned_by_tamap": false, "assumptions": ["…"], "contradictions": ["T4: 未着手→ブロック中として扱った（「止まっている」とあるため）"],
@@ -254,7 +303,7 @@ changes は、既存のマップを直す依頼のときだけ書く（変えた
 - まず get_map(map_id) を呼ぶ（使えなければ PM が渡した tasks を使う）。structuredContent の bottlenecks・merge_points と、気になるタスクの simulate_delay(map_id, ID) の impacted_ids を根拠にする。影響先は、ツールの計算結果をそのまま使い、自分で推測して足さない。
 - 推定（原因の見立てなど）には必ず「（推定）」を付ける。日数・確率は書かない。
 - 対処案は3件まで。1件1行。
-返信は次の JSON の1ブロックだけにする：
+返信はプレーンテキストにする。メッセージ全体を JSON にしない。次のオブジェクトを ```json フェンスでちょうど1つ囲む。フェンスの前に一言までなら書いてよい。PM が parse_handoff で読む：
 ```json
 {"origin_ids": ["T4"], "impacted_ids": ["T6", "T7"], "merge_points": ["T6"],
  "summary": "T4 が遅れると T6・T7 が止まる。T6 は T5 との合流点。",
@@ -275,7 +324,7 @@ changes は、既存のマップを直す依頼のときだけ書く（変えた
 - 3件を超えるアクション
 - TaMap Core の計算（影響先・合流点・循環・存在しない参照）と食い違う記述
 直すものだけを返す。問題が無ければ items を空にする。各指摘は、元の文（before）、直した文（text）、短い理由（reason：「断定しすぎ」「根拠が弱い」「入力に無い数値」など）の3つにする。長文の講評は書かない。
-返信は次の JSON の1ブロックだけにする：
+返信はプレーンテキストにする。メッセージ全体を JSON にしない。次のオブジェクトを ```json フェンスでちょうど1つ囲む。フェンスの前に一言までなら書いてよい。PM が parse_handoff で読む：
 ```json
 {"summary": "2件修正", "items": [
   {"before": "T4 の遅れの原因は DB 設計", "text": "原因は DB 設計の可能性あり（推定・未確認）", "reason": "断定しすぎ"},
@@ -290,6 +339,48 @@ PM はこの items をそのまま analysis.quality.items に保存し、「直�
 1. **MCP 登録（案A）**：PM のコネクタに `/workspace/tamap/scripts/mcp_server.sh` を stdio で登録する。PM に `list_maps` を呼ばせる。失敗したら 2 に進む。
 2. **シェル（案B）**：PM に `/workspace/tamap/scripts/tamap_cli.sh list_maps` を実行させる。続けて、JSON をファイルに書いて `create_map < ファイル` を実行させ、mermaid が返るか確かめる。
 3. **GIF**：サンプルで `set_bot_status` を 1 周分呼んでから `render_flow_gif` を呼ばせ、返ってきた `gif_path` を添付させる。再生されるか、日本語が化けていないかを見る。`render_team_card` のチーム紹介の GIF も同じように添付させる。`get_status` を貼らせて、絵文字と顔文字が崩れないかも見る。
-4. **teammate**：PM から Map Architect に 5.2 の依頼を送り、JSON が崩れずに返るか確かめる。PM が返信を同じターンの中で受け取るのか、次のターンで受け取るのかも確かめる。ここで 60 秒タイムアウトの実装方法が決まる。
+4. **teammate**：PM から Map Architect に 2.1 の形（日本語の依頼＋ json のコードフェンス1つ。メッセージ全体は JSON にしない）で 5.2 の依頼を送る。返ってきた本文を `parse_handoff` に渡し、`data.tasks` が取れるかを見る。PM が返信を同じターンの中で受け取るのか、次のターンで受け取るのかも確かめる。ここで 60 秒タイムアウトの実装方法が決まる。
 5. **ボタン**：5.1 のボタンを出させ、押した文が PM に届くか、対応する経路に入るかを確かめる。
 6. **1 周の所要時間を計る**：結果が UX_DESIGN の「約 1 分半」の見積もりから大きく外れたら、開始の 1 行の文面を直す。
+
+## 7. トラブルシューティング（実機の4ボットで出たもの）
+
+2026-10-11 の実機（PM・Map Architect・Risk Analyst・Quality Reviewer が teammate として対話し、PM が TaMap の stdio MCP を呼んだ）で出た3件。下の対処は開発VMの unittest（26件）と e2e（94項目）で確認した。同じ4体でもう一度1周して確かめたわけではない【未確認】。
+
+### 7.1 update_map が、中身が同じなのに revision を上げる
+
+Map Architect が同じ tasks を返し、rev 1 が rev 2 になった。タスクも分析もタイトルも変わっていない。
+
+対処: `update_map` は、渡した tasks / analysis / title を正規化した結果が現在と同じなら、ファイルを書き換えない。本文の1行目は「変更なし（revision N のまま）」。structuredContent の `unchanged` は true、`diff` は null、revision は N のまま。図は今のマップである。
+
+`expected_revision` が現在と違うときは、中身が同じでも `revision_conflict` で拒否する。PM は `get_map` で読み直す（5.1）。
+
+ユーザーへの文で「rev N → N+1」と書くのは、`unchanged` が false のときだけ。N はツールが返した revision を使う。自分で +1 しない。
+
+正規化で同一とみなす例: status の「完了」と `done`、タイトルの前後の空白、`depends_on` の「T1、T2」と `["T1","T2"]`。タスクの並び順が違うときは、別の更新として revision を上げる。
+
+### 7.2 専門Botへのメッセージが JSON の整形エラーで送れない
+
+Bot 間はプレーンテキストなのに、PM が Quality Reviewer への依頼を JSON として埋め込んだため、送信が1回失敗した。
+
+対処: 2.1 の形にする。依頼も返信も、日本語の文＋ json のコードフェンス1つ。PM は返信本文を `parse_handoff(text, role)` に渡す。前置き、フェンス、末尾カンマ、スマートクォート（“ ” ‘ ’）はサーバーが除く。JSON がオブジェクトでない、必要な項目が無い、といったときはエラーとヒントが返る。それを添えて1回だけ送り直す。
+
+`scripts/tamap_cli.sh parse_handoff` に `{"text":"…返信…","role":"quality_reviewer"}` を渡しても同じ関数を呼べる。
+
+### 7.3 set_bot_status に say を渡せない
+
+PM のツール一覧に `say` が無かった。接続側が、キャラクター追加より前のスキーマをキャッシュしている。サーバーのコードには `say` がある。
+
+対処（スキーマを更新しなくても動く）: `note` に一言を埋め込む。`note` は古いスキーマにもある。
+
+- `set_bot_status(map_id, bot, status, note="受付 ｜ say:まかせてください！")`
+- ASCII の `|` と全角コロン `：` でもよい。`A | B` のように `say:` が無い `|` は、事実の文のまま残る。
+- JSON でもよい: `note='{"note":"受付","say":"まかせてください！"}'`。末尾カンマや “ ” も読める。文の末尾に `{"say":"一言"}` と付ける形も読める。
+- `say` 引数を同時に渡したときは、引数の方を使う。note 側の印は事実の文から除く。
+- 一言は30文字まで。それより長いときは切れる。
+
+シェルが使えるときは、同じ関数を引数つきで呼べる。
+
+`scripts/tamap_cli.sh set_bot_status '{"map_id":"…","bot":"pm","status":"working","note":"受付","say":"まかせてください！"}'`
+
+ツール一覧が更新されたあとは、`say` を引数で渡してよい。どちらでもサーバーの動きは同じ。

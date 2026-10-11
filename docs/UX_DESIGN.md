@@ -163,6 +163,7 @@ revision 4 ・ map_id `JbeSRnxW` ・ 更新 13:58:10 JST ・ 検証OK
 ````
 - 状態の変更は、事実の更新なので専門Botを回さない（PMだけで反映、約10秒）。アクションを作り直すときだけ［チームで再分析］で1周する（4.1と同じ2投稿）。
 - 差分の1行は `update_map` の戻り値に含める（8章 P3）。それまではPMが前後の structuredContent を比べて書く。
+- tasks / analysis / title を渡しても、正規化のあとで今のマップと同じなら revision は上がらない。戻り値の1行目は「変更なし（revision N のまま）」、structuredContent の `unchanged` は true。このときは「rev N → N+1」と書かない。`expected_revision` が現在の revision と違うときは、中身が同じでも `revision_conflict` になる。
 
 ### 4.6 「Botの状態を見る」— 1投稿
 `get_status` の稼働図mermaidと直近の履歴をそのまま貼る。稼働図を出すのは、このボタンとエラー時の2つの場合だけ。
