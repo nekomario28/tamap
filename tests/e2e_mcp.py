@@ -337,7 +337,7 @@ async def main():
             res, md, d = await call(s, "set_bot_status", {"map_id": mid, "bot": "risk_analyst", "status": "done",
                                                           "note": "影響はT6・T7", "say": "先はT6とT7かも"},
                                     "set_bot_status（完了でも say を稼働図に出す）")
-            check("「先はT6とT7かも」" in md and "(^ω^) 完了" in md and "影響の先、見つけました！" not in md,
+            check("「先はT6とT7かも」" in md and "(^ω^) 分析完了" in md and "影響の先、見つけました！" not in md,
                   "done bot shows the passed say, not the catchphrase")
             res, md, d = await call(s, "get_status", {"map_id": mid})
             check("「先はT6とT7かも」" in md, "get_status shows the done say")
@@ -357,7 +357,7 @@ async def main():
     body = json.loads(p.stderr)
     check(p.returncode == 0 and body["bots"]["quality_reviewer"]["say"] == "指摘なしだよ"
           and body["bots"]["quality_reviewer"]["note"] == "指摘なし"
-          and "「指摘なしだよ」" in p.stdout and "(^ω^) 完了" in p.stdout,
+          and "「指摘なしだよ」" in p.stdout and "(^ω^) 分析完了" in p.stdout,
           "tamap_cli.sh set_bot_status reads say from note and shows it for done")
     p = subprocess.run([cli, "parse_handoff", json.dumps(
         {"bot": "quality_reviewer", "text": "見たよ。\n```json\n{\"items\": [], \"say\": \"指摘なしだよ\"}\n```"},

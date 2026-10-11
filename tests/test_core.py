@@ -514,7 +514,7 @@ class StoreTest(unittest.TestCase):
         # Done and error show the passed say (not only the working bubble), same as the GIF / live page.
         m = store.set_bot_status(mid, "map_architect", "done", "7本つないだ", say="7本、つないだっす")
         md = render.render_status(m)
-        self.assertIn("🗺️ Map Architect<br>(^ω^) 完了<br>「7本、つないだっす」", md)
+        self.assertIn("🗺️ Map Architect<br>(^ω^) 分析完了<br>「7本、つないだっす」", md)
         self.assertNotIn("地図、できたっす！", md)
         m = store.set_bot_status(mid, "quality_reviewer", "error", "60秒応答なし", say="ここ、直したいね")
         md = render.render_status(m)
@@ -522,7 +522,7 @@ class StoreTest(unittest.TestCase):
         self.assertNotIn("読みきれなかった…ごめんね", md)
         m = store.set_bot_status(mid, "risk_analyst", "done", "影響を記録")
         md = render.render_status(m)
-        self.assertIn("⚠️ Risk Analyst<br>(^ω^) 完了<br>「影響の先、見つけました！」", md)
+        self.assertIn("⚠️ Risk Analyst<br>(^ω^) 分析完了<br>「影響の先、見つけました！」", md)
 
     def _join(self, procs):
         for p in procs:
