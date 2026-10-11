@@ -5,8 +5,12 @@ Usage: uv run python tests/e2e_mcp.py   (exits non-zero on failure)
 """
 import asyncio
 import json
+import http.client
 import os
+import socket
 import subprocess
+import threading
+import time
 import sys
 import tempfile
 from pathlib import Path
@@ -17,8 +21,17 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 ROOT = Path(__file__).resolve().parent.parent
 # Use a throwaway data dir unless TAMAP_E2E_KEEP=1 (then the real data/maps is used).
 DATA_DIR = None if os.environ.get("TAMAP_E2E_KEEP") else tempfile.mkdtemp(prefix="tamap-e2e-")
-ENV = {**os.environ, **({"TAMAP_DATA_DIR": DATA_DIR, "TAMAP_OUT_DIR": os.path.join(DATA_DIR, "out")}
-                         if DATA_DIR else {})}
+def _free_port() -> int:
+    with socket.socket() as so:
+        so.bind(("127.0.0.1", 0))
+        return so.getsockname()[1]
+
+
+LIVE_PORT = _free_port()
+ENV = {**os.environ, "TAMAP_LIVE_PORT": str(LIVE_PORT),
+       **({"TAMAP_DATA_DIR": DATA_DIR, "TAMAP_OUT_DIR": os.path.join(DATA_DIR, "out")} if DATA_DIR else {})}
+ENV.pop("TAMAP_LIVE_TOKEN", None)
+ENV.pop("TAMAP_LIVE_BASE_URL", None)
 SERVER = StdioServerParameters(command=str(ROOT / "scripts" / "mcp_server.sh"), args=[], env=ENV)
 
 failed = False
@@ -40,6 +53,72 @@ async def call(s, name, args, label=None):
     return res, md, data
 
 
+def live_checks(mid: str) -> None:
+    """scripts/live_view.sh: read-only, and a set_bot_status (via tamap_cli.sh) reaches the page over SSE."""
+    proc = subprocess.Popen([str(ROOT / "scripts" / "live_view.sh"), "--port", str(LIVE_PORT)], cwd="/tmp", env=ENV,
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    try:
+        check("http://127.0.0.1:" in proc.stdout.readline(), "live_view.sh started")
+
+        def req(method, path):
+            c = http.client.HTTPConnection("127.0.0.1", LIVE_PORT, timeout=5)
+            c.request(method, path)
+            r = c.getresponse()
+            body = r.read()
+            c.close()
+            return r.status, body
+
+        st, body = req("GET", f"/live/{mid}")
+        check(st == 200 and b"EventSource" in body, "GET /live/{map_id} -> page")
+        f = Path(ENV.get("TAMAP_DATA_DIR") or ROOT / "data" / "maps") / f"{mid}.json"
+        before = f.read_bytes()
+        check(all(req(m, f"/api/maps/{mid}")[0] == 405 for m in ("POST", "PUT", "DELETE", "PATCH")),
+              "live page rejects write methods (405)")
+        check(f.read_bytes() == before, "live page did not modify the map file")
+        p = subprocess.run([str(ROOT / "scripts" / "tamap_cli.sh"), "get_live_url", json.dumps({"map_id": mid})],
+                           env=ENV, capture_output=True, text=True, timeout=60)
+        check(p.returncode == 0 and json.loads(p.stderr)["running"] is True, "get_live_url: running")
+
+        c = http.client.HTTPConnection("127.0.0.1", LIVE_PORT, timeout=10)
+        c.request("GET", f"/events/{mid}")
+        r = c.getresponse()
+        got: list[dict] = []
+
+        def reader():
+            data = None
+            try:
+                for raw in r.fp:
+                    line = raw.decode()
+                    if line.startswith("data: "):
+                        data = json.loads(line[6:])
+                    elif line == "\n" and data is not None:
+                        got.append(data)
+                        data = None
+            except (OSError, ValueError):
+                pass
+
+        threading.Thread(target=reader, daemon=True).start()
+        deadline = time.monotonic() + 5
+        while not got and time.monotonic() < deadline:
+            time.sleep(0.05)
+        check(len(got) == 1, "SSE sends the current snapshot on connect")
+        t0 = time.monotonic()
+        subprocess.run([str(ROOT / "scripts" / "tamap_cli.sh"), "set_bot_status",
+                        json.dumps({"map_id": mid, "bot": "quality_reviewer", "status": "working",
+                                    "note": "SSE確認", "say": "ちょっとだけ見るね"})],
+                       env=ENV, capture_output=True, text=True, timeout=60)
+        while len(got) < 2 and time.monotonic() < t0 + 5:
+            time.sleep(0.05)
+        last = got[-1] if got else {}
+        check(len(got) >= 2 and last["bots"]["quality_reviewer"]["status"] == "working"
+              and last["events"][-1]["say"] == "ちょっとだけ見るね",
+              f"SSE pushes set_bot_status (CLI call + push {time.monotonic() - t0:.2f}s)")
+        c.close()
+    finally:
+        proc.terminate()
+        proc.wait(timeout=10)
+
+
 async def main():
     sample = json.loads((ROOT / "samples" / "readme_example.json").read_text())
     broken = json.loads((ROOT / "samples" / "broken_example.json").read_text())
@@ -47,8 +126,8 @@ async def main():
         async with ClientSession(r, w) as s:
             await s.initialize()
             tools = sorted(t.name for t in (await s.list_tools()).tools)
-            check(tools == ["create_map", "get_map", "get_status", "list_maps", "render_flow_gif", "render_team_card",
-                            "set_bot_status", "simulate_delay", "update_map"], f"tools: {tools}")
+            check(tools == ["create_map", "get_live_url", "get_map", "get_status", "list_maps", "render_flow_gif",
+                            "render_team_card", "set_bot_status", "simulate_delay", "update_map"], f"tools: {tools}")
 
             analysis = {
                 "pm": {"summary": "T6がT4系列とT5系列の合流点。T3→T4→T6→T7が最長の未完了チェーン。",
@@ -62,6 +141,10 @@ async def main():
                                     "create_map（README例）")
             mid = d["map_id"]
             check(not res.isError and d["revision"] == 1 and d["ok"], "create_map: rev1, 検証OK")
+            check(d.get("live_url") == f"http://127.0.0.1:{LIVE_PORT}/live/{mid}", f"create_map live_url {d.get('live_url')}")
+            lres, lmd, ld = await call(s, "get_live_url", {"map_id": mid})
+            check(not lres.isError and ld["running"] is False and "起動していません" in lmd
+                  and ld["live_url"] == d["live_url"], "get_live_url: same URL, not running yet")
             check(md.startswith("```mermaid\ngraph LR") and md.count("```") == 2, "chat text is a single mermaid block")
             tail = md.rsplit("```", 1)[1].strip()
             check(tail.startswith("revision 1 ・ map_id") and "\n" not in tail, f"one revision line below: {tail}")
@@ -194,6 +277,8 @@ async def main():
             check(res.isError, "unknown task in simulate_delay -> error")
             res, md, d = await call(s, "list_maps", {}, "list_maps")
             check(len(d["maps"]) == 3, "list_maps: 3 maps")
+
+    live_checks(mid)
 
     # Shell fallback (scripts/tamap_cli.sh) calls the same tool functions against the same data dir.
     cli = str(ROOT / "scripts" / "tamap_cli.sh")

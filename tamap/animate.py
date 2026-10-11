@@ -41,6 +41,7 @@ SPRITE_Y = 82
 LINK_Y = SPRITE_Y + 7 * SCALE
 NAME_Y = 182
 CAPTION_Y = 240
+TASKS_TOP, TASKS_BOTTOM = 270, 522
 FONT_CANDIDATES = [
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
@@ -154,6 +155,31 @@ def _layers(tasks: list[dict]) -> dict[str, int]:
     return depth
 
 
+def task_layout(tasks: list[dict]) -> tuple[dict[str, tuple[int, int]], int, int]:
+    """Task box centres (columns = dependency depth) and box size on the 960x540 canvas (GIF and live page)."""
+    ids_seen: dict[str, dict] = {}
+    for t in tasks:
+        ids_seen.setdefault(t["id"], t)
+    depth = _layers(list(ids_seen.values()))
+    cols: dict[int, list[str]] = {}
+    for tid in ids_seen:
+        cols.setdefault(depth[tid], []).append(tid)
+    ncol = max(len(cols), 1)
+    top, bottom, left, right = TASKS_TOP, TASKS_BOTTOM, 30, W - 30
+    cw = (right - left) / ncol
+    box_w = int(min(150, cw - 24))
+    rows = max((len(v) for v in cols.values()), default=1)
+    rh = (bottom - top) / rows
+    box_h = int(min(52, rh - 10))
+    pos: dict[str, tuple[int, int]] = {}
+    for c, ids in sorted(cols.items()):
+        x = int(left + cw * c + cw / 2)
+        y0 = top + (bottom - top - rh * len(ids)) / 2
+        for r, tid in enumerate(ids):
+            pos[tid] = (x, int(y0 + rh * r + rh / 2))
+    return pos, box_w, box_h
+
+
 class FlowRenderer:
     def __init__(self, m: dict):
         self.m = m
@@ -172,23 +198,7 @@ class FlowRenderer:
         self._layout()
 
     def _layout(self):
-        depth = _layers(list(self.tasks.values()))
-        cols: dict[int, list[str]] = {}
-        for tid in self.tasks:
-            cols.setdefault(depth[tid], []).append(tid)
-        ncol = max(len(cols), 1)
-        top, bottom, left, right = 270, 522, 30, W - 30
-        cw = (right - left) / ncol
-        self.box_w = int(min(150, cw - 24))
-        rows = max((len(v) for v in cols.values()), default=1)
-        rh = (bottom - top) / rows
-        self.box_h = int(min(52, rh - 10))
-        self.pos: dict[str, tuple[int, int]] = {}
-        for c, ids in sorted(cols.items()):
-            x = int(left + cw * c + cw / 2)
-            y0 = top + (bottom - top - rh * len(ids)) / 2
-            for r, tid in enumerate(ids):
-                self.pos[tid] = (x, int(y0 + rh * r + rh / 2))
+        self.pos, self.box_w, self.box_h = task_layout(list(self.tasks.values()))
 
     # ---------- drawing ----------
 

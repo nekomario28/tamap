@@ -72,9 +72,8 @@ def _mix(c, d, t):
     return tuple(int(a + (b - a) * t) for a, b in zip(c, d))
 
 
-def draw_bot(d: ImageDraw.ImageDraw, bot: str, x: int, y: int, status: str, scale: int = 5,
-             blink: bool = False) -> None:
-    """Draw the sprite with its top-left at (x, y). Idle bots are drawn faded (only the worker is lit)."""
+def bot_pixels(bot: str, status: str, blink: bool = False) -> list[tuple[int, int, tuple[int, int, int]]]:
+    """Resolved (grid x, grid y, rgb) cells in paint order; the GIF and the live page both draw from this."""
     body = PERSONAS[bot]["color"]
     fade = 0.6 if status == "idle" else 0.0
 
@@ -82,34 +81,37 @@ def draw_bot(d: ImageDraw.ImageDraw, bot: str, x: int, y: int, status: str, scal
         return _mix(c, GREY, fade) if fade else c
 
     pal = {"D": _mix(body, INK, 0.55), "B": body, "L": _mix(body, WHITE, 0.45), "W": FACE}
-
-    def px(gx, gy, c):
-        d.rectangle((x + gx * scale, y + gy * scale, x + (gx + 1) * scale - 1, y + (gy + 1) * scale - 1), fill=col(c))
-
-    for gy, row in enumerate(BODY):
-        for gx, ch in enumerate(row):
-            if ch != ".":
-                px(gx, gy, pal[ch])
-    for gx, gy, k in ACCESSORIES[bot]:
-        px(gx, gy, ACC_COLORS[k])
+    out = [(gx, gy, col(pal[ch])) for gy, row in enumerate(BODY) for gx, ch in enumerate(row) if ch != "."]
+    out += [(gx, gy, col(ACC_COLORS[k])) for gx, gy, k in ACCESSORIES[bot]]
     face = BLINK if blink and status == "working" else FACES[status]
-    for gx, gy, k in face:
-        px(gx, gy, ACC_COLORS[k])
+    out += [(gx, gy, col(ACC_COLORS[k])) for gx, gy, k in face]
+    return out
 
 
-def draw_sparkle(d: ImageDraw.ImageDraw, x: int, y: int, scale: int, color=(250, 204, 21)) -> None:
-    for gx, gy in ((1, 0), (0, 1), (1, 1), (2, 1), (1, 2)):
-        d.rectangle((x + gx * scale, y + gy * scale, x + (gx + 1) * scale - 1, y + (gy + 1) * scale - 1), fill=color)
+def draw_bot(d: ImageDraw.ImageDraw, bot: str, x: int, y: int, status: str, scale: int = 5,
+             blink: bool = False) -> None:
+    """Draw the sprite with its top-left at (x, y). Idle bots are drawn faded (only the worker is lit)."""
+    for gx, gy, c in bot_pixels(bot, status, blink):
+        d.rectangle((x + gx * scale, y + gy * scale, x + (gx + 1) * scale - 1, y + (gy + 1) * scale - 1), fill=c)
 
 
-def draw_envelope(d: ImageDraw.ImageDraw, cx: float, cy: float, color, scale: int = 3) -> None:
-    grid = ["DDDDDDDDDDD",
+SPARKLE = ((1, 0), (0, 1), (1, 1), (2, 1), (1, 2))
+ENVELOPE = ["DDDDDDDDDDD",
             "DFDFFFFFDFD",
             "DFFDFFFDFFD",
             "DFFFDFDFFFD",
             "DFFFFDFFFFD",
             "DFFFFFFFFFD",
             "DDDDDDDDDDD"]
+
+
+def draw_sparkle(d: ImageDraw.ImageDraw, x: int, y: int, scale: int, color=(250, 204, 21)) -> None:
+    for gx, gy in SPARKLE:
+        d.rectangle((x + gx * scale, y + gy * scale, x + (gx + 1) * scale - 1, y + (gy + 1) * scale - 1), fill=color)
+
+
+def draw_envelope(d: ImageDraw.ImageDraw, cx: float, cy: float, color, scale: int = 3) -> None:
+    grid = ENVELOPE
     x0, y0 = cx - len(grid[0]) * scale / 2, cy - len(grid) * scale / 2
     for gy, row in enumerate(grid):
         for gx, ch in enumerate(row):

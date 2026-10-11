@@ -8,6 +8,11 @@ from tamap import core, store
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def sprites_first_color(bot, status):
+    from tamap import sprites
+    return sprites.bot_pixels(bot, status)[0][2]
+
+
 def load(name):
     return json.loads((ROOT / "samples" / name).read_text())["tasks"]
 
@@ -116,6 +121,87 @@ class StoreTest(unittest.TestCase):
         card = animate.render_team_card(Path(self.tmp.name) / "out")
         with Image.open(card["path"]) as img:
             self.assertEqual((img.format, img.n_frames), ("GIF", card["frames"]))
+
+    def test_live_page_read_only_and_sse(self):
+        import http.client
+        import os
+        import threading
+        import time
+
+        from tamap import live
+        srv = live.make_server("127.0.0.1", 0, quiet=True)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        port = srv.server_address[1]
+        mid = self.m["map_id"]
+        path = store.DATA_DIR / f"{mid}.json"
+
+        def req(method, url):
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            c.request(method, url)
+            r = c.getresponse()
+            body = r.read()
+            c.close()
+            return r.status, r.getheader("Content-Type"), body
+
+        try:
+            st, ct, body = req("GET", f"/live/{mid}")
+            self.assertEqual((st, ct), (200, "text/html; charset=utf-8"))
+            self.assertIn(b"EventSource", body)
+            st, _, body = req("GET", f"/api/maps/{mid}")
+            snap = json.loads(body)
+            self.assertEqual((st, snap["revision"], len(snap["tasks"])), (200, 1, 7))
+            spec = json.loads(req("GET", "/api/scene")[2])
+            self.assertEqual(spec["sprites"]["pm"]["idle"][0][2], "#%02x%02x%02x" % sprites_first_color("pm", "idle"))
+            before = path.read_bytes()
+            for method in ("POST", "PUT", "DELETE", "PATCH", "OPTIONS"):
+                for url in (f"/live/{mid}", f"/api/maps/{mid}", f"/events/{mid}", "/"):
+                    self.assertEqual(req(method, url)[0], 405, f"{method} {url}")
+            self.assertEqual(path.read_bytes(), before)
+            self.assertEqual(sorted(os.listdir(store.DATA_DIR)), sorted([f"{mid}.json", ".lock"]))
+            for url in ("/api/maps/nosuchmap", "/api/maps/..%2Fmaps", "/live/a/b", "/events/x"):
+                self.assertEqual(req("GET", url)[0], 404, url)
+
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            c.request("GET", f"/events/{mid}")
+            r = c.getresponse()
+            self.assertEqual(r.getheader("Content-Type"), "text/event-stream; charset=utf-8")
+
+            def next_snapshot():
+                data = None
+                while True:
+                    line = r.fp.readline().decode()
+                    if line.startswith("data: "):
+                        data = json.loads(line[6:])
+                    elif line == "\n" and data is not None:
+                        return data
+
+            self.assertEqual(next_snapshot()["bots"]["risk_analyst"]["status"], "idle")
+            t0 = time.monotonic()
+            store.set_bot_status(mid, "risk_analyst", "working", "T4を分析", say="あやしいかも…")
+            s2 = next_snapshot()
+            self.assertLess(time.monotonic() - t0, 3)
+            self.assertEqual(s2["bots"]["risk_analyst"]["status"], "working")
+            self.assertEqual((s2["events"][-1]["say"], s2["events"][-1]["line"]), ("あやしいかも…", "あやしいかも…"))
+            store.update_map(mid, 1, [dict(t, status="done") if t["id"] == "T3" else t
+                                      for t in load("readme_example.json")])
+            s3 = next_snapshot()
+            self.assertEqual(s3["revision"], 2)
+            self.assertEqual({t["id"]: t["status"] for t in s3["tasks"]}["T3"], "done")
+            c.close()
+
+            os.environ["TAMAP_LIVE_TOKEN"] = "s3cret"
+            try:
+                self.assertEqual(req("GET", f"/live/{mid}")[0], 403)
+                self.assertEqual(req("GET", f"/api/maps/{mid}?token=nope")[0], 403)
+                self.assertEqual(req("GET", f"/live/{mid}?token=s3cret")[0], 200)
+                self.assertEqual(req("GET", "/healthz")[0], 200)
+                self.assertTrue(live.live_url(mid).endswith(f"/live/{mid}?token=s3cret"))
+            finally:
+                del os.environ["TAMAP_LIVE_TOKEN"]
+        finally:
+            srv.stopping.set()
+            srv.shutdown()
+            srv.server_close()
 
     def test_persona_say_and_status_chart(self):
         from tamap import persona, render

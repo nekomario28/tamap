@@ -11,7 +11,9 @@ from __future__ import annotations
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent
 
-from . import animate, core, persona, render, store
+import urllib.request
+
+from . import animate, core, live, persona, render, store
 
 mcp = FastMCP(
     "tamap",
@@ -24,6 +26,7 @@ mcp = FastMCP(
         "not post the flowchart except on errors or when the user asks (get_status). render_flow_gif replays the "
         "last cycle as out/<map_id>_flow.gif to attach to the result message; the bots appear as pixel characters and "
         "set_bot_status(say=...) is their speech bubble. render_team_card makes out/tamap_team.gif for the greeting. "
+        "get_live_url gives an optional read-only live page (scripts/live_view.sh) where the bots move in real time. "
         "Task status: done/in_progress/todo/blocked. Validation (duplicate ids, unknown references, cycles) is "
         "computed by deterministic code; do not override it in prose. Optional analysis = {pm:{summary, actions"
         "(max 3)}, map_architect:{summary}, risk:{summary, items}, quality:{summary, items:[{before, text, "
@@ -64,7 +67,7 @@ def create_map(title: str, tasks: list[dict], analysis: dict | None = None,
     """
     try:
         m = store.create_map(title, tasks, analysis, source)
-        return _ok(render.render_map(m), **_meta(m))
+        return _ok(render.render_map(m), **_meta(m), live_url=live.live_url(m["map_id"]))
     except Exception as e:  # noqa: BLE001
         return _fail(e)
 
@@ -169,6 +172,31 @@ def render_flow_gif(map_id: str) -> CallToolResult:
             text += " ※日本語フォントが見つからず、文字が化けている可能性があります（TAMAP_FONT で指定可）"
         return _ok(text, map_id=map_id, revision=m["revision"], gif_path=r["path"], frames=r["frames"],
                    duration_ms=r["duration_ms"], events=r["events"], font=r["font"])
+    except Exception as e:  # noqa: BLE001
+        return _fail(e)
+
+
+def _live_running() -> bool:
+    try:
+        with urllib.request.urlopen(live.base_url() + "/healthz", timeout=0.5) as r:
+            return r.status == 200
+    except OSError:
+        return False
+
+
+@mcp.tool()
+def get_live_url(map_id: str) -> CallToolResult:
+    """URL of the read-only live page where the 4 pixel bots move with this map's bot_history in real time.
+
+    Served by scripts/live_view.sh on the box (default http://127.0.0.1:8765, only reachable from the box
+    unless it is exposed separately). Text result = one line; structured data has live_url and running.
+    """
+    try:
+        m = store.read_map(map_id)
+        url = live.live_url(map_id)
+        running = _live_running()
+        text = f"▶ ライブページ（閲覧専用）: {url}" + ("" if running else "（ライブページのサーバーが起動していません: scripts/live_view.sh）")
+        return _ok(text, map_id=map_id, revision=m["revision"], live_url=url, running=running)
     except Exception as e:  # noqa: BLE001
         return _fail(e)
 
