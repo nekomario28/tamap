@@ -4,20 +4,19 @@ render_flow_gif(map) writes out/<map_id>_flow.gif (TAMAP_OUT_DIR to override). T
 pixel characters (sprites.py / persona.py): only the working bot is lit and bobs, idle bots are faded
 and doze, each status change gets a speech bubble in the bot's own voice (`say` or the persona line).
 Requests (blue envelope) and results (yellow envelope) travel between PM and the specialist; the last
-frames spread the delay impact from the bottleneck over the task map and show the PM's 3 actions plus
-the Quality Reviewer badge (count = analysis.quality.items).
+frames spread the delay impact from the bottleneck over the task map (no action list: bots show the AI analysis,
+the task map shows the project progress) plus the Quality Reviewer badge (count = analysis.quality.items).
 render_team_card() writes out/tamap_team.gif, a team introduction for the PM's greeting.
 """
 from __future__ import annotations
 
 import os
 import subprocess
-from collections import deque
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from . import core, persona, sprites, store
+from . import core, layout, persona, sprites, store
 from .render import hms
 
 OUT_DIR = Path(os.environ.get("TAMAP_OUT_DIR", store.ROOT / "out"))
@@ -25,13 +24,13 @@ W, H = 960, 540
 BG = (248, 250, 252)
 INK = (17, 24, 39)
 MUTED = (100, 116, 139)
-BOT_FILL = {"idle": (156, 163, 175), "working": (59, 130, 246), "done": (34, 197, 94), "error": (239, 68, 68)}
-TASK_FILL = {"done": (34, 197, 94), "in_progress": (59, 130, 246), "todo": (156, 163, 175),
-             "blocked": (249, 115, 22)}
-IMPACT = (250, 204, 21)
-ERR = (239, 68, 68)
+BOT_FILL = persona.BOT_COLORS
+TASK_FILL = persona.TASK_COLORS
+IMPACT = persona.TASK_IMPACT
+ERR = persona.TASK_ERR
+BOT_ERR = persona.BOT_COLORS["error"]
 REQUEST, RESULT = (37, 99, 235), (234, 179, 8)
-BOT_STATUS_JA = {"idle": "待機", "working": "作業中", "done": "完了", "error": "エラー"}
+BOT_STATUS_JA = persona.BOT_STATUS_JA  # 待機 / 分析中 / 分析完了 / エラー (the bots' analysis, not the tasks)
 NODES = [("user", "ユーザー", 80), ("pm", "TaMap PM", 250), ("map_architect", "Map Architect", 455),
          ("risk_analyst", "Risk Analyst", 640), ("quality_reviewer", "Quality Reviewer", 825)]
 NODE_X = {k: x for k, _, x in NODES}
@@ -41,7 +40,20 @@ SPRITE_Y = 82
 LINK_Y = SPRITE_Y + 7 * SCALE
 NAME_Y = 182
 CAPTION_Y = 240
-TASKS_TOP, TASKS_BOTTOM = 270, 522
+TASKS_TOP, TASKS_BOTTOM = 272, 524
+ALL_DONE_CAPTION = persona.ALL_DONE_CAPTION
+GLOW_PAD = 10
+
+
+def glow_box(key: str, x: int) -> tuple[int, int, int, int]:
+    """Highlight box behind a working bot, sized to the sprite's real pixels (Risk Analyst's magnifier
+    sticks out to the right) and never narrower than the default 124px card. Shared with the live page."""
+    xs = [gx for gx, _, _ in sprites.bot_pixels(key, "working")]
+    left = x - 8 * SCALE + min(xs) * SCALE - GLOW_PAD
+    right = x - 8 * SCALE + (max(xs) + 1) * SCALE + GLOW_PAD
+    return min(left, x - 62), SPRITE_Y - 8 - SCALE, max(right, x + 62), SPRITE_Y + 14 * SCALE + 6
+
+
 FONT_CANDIDATES = [
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
@@ -117,67 +129,69 @@ def _center(draw, xy, text, font, fill):
 
 
 def cycle_events(history: list[dict]) -> list[dict]:
-    """The last PM-intake → ... cycle: from the last `pm working` before the last specialist `working`."""
-    last_spec = max((i for i, h in enumerate(history) if h["bot"] != "pm" and h["status"] == "working"), default=None)
-    if last_spec is None:
-        return list(history)
-    first_spec = last_spec
-    while first_spec > 0 and not (history[first_spec - 1]["bot"] == "pm" and history[first_spec - 1]["status"] == "working"):
-        first_spec -= 1
-    start = max(first_spec - 1, 0)
-    return list(history[start:])
+    """The latest whole cycle, from the user's request to the PM's final answer.
 
-
-def _layers(tasks: list[dict]) -> dict[str, int]:
-    by_id = {t["id"]: t for t in tasks}
-    depth: dict[str, int] = {}
-    succ = {tid: [] for tid in by_id}
-    indeg = {tid: 0 for tid in by_id}
-    for t in by_id.values():
-        for d in t["depends_on"]:
-            if d in by_id and d != t["id"]:
-                succ[d].append(t["id"])
-                indeg[t["id"]] += 1
-    q = deque(tid for tid in by_id if indeg[tid] == 0)
-    for tid in q:
-        depth[tid] = 0
-    while q:
-        v = q.popleft()
-        for w in succ[v]:
-            depth[w] = max(depth.get(w, 0), depth[v] + 1)
-            indeg[w] -= 1
-            if indeg[w] == 0:
-                q.append(w)
-    nxt = max(depth.values(), default=-1) + 1
-    for tid in by_id:  # tasks on a cycle: put them after everything else
-        if tid not in depth:
-            depth[tid] = nxt
-    return depth
+    A cycle ends with `pm done/error`. If the history ends with one, the cycle is the stretch after the
+    previous PM done/error; otherwise (still running) it is everything after the last PM done/error.
+    Leading entries before the cycle's first `pm working` (the intake) are skipped, so the GIF replays
+    PM → Map Architect → PM → Risk Analyst → PM → Quality Reviewer → PM in full.
+    """
+    if not history:
+        return []
+    ends = [i for i, h in enumerate(history) if h["bot"] == "pm" and h["status"] in ("done", "error")]
+    last = len(history) - 1
+    if ends and ends[-1] == last:
+        start = ends[-2] + 1 if len(ends) > 1 else 0
+    else:
+        start = ends[-1] + 1 if ends else 0
+    seg = history[start:]
+    intake = next((i for i, h in enumerate(seg) if h["bot"] == "pm" and h["status"] == "working"), 0)
+    return list(seg[intake:])
 
 
 def task_layout(tasks: list[dict]) -> tuple[dict[str, tuple[int, int]], int, int]:
-    """Task box centres (columns = dependency depth) and box size on the 960x540 canvas (GIF and live page)."""
-    ids_seen: dict[str, dict] = {}
-    for t in tasks:
-        ids_seen.setdefault(t["id"], t)
-    depth = _layers(list(ids_seen.values()))
-    cols: dict[int, list[str]] = {}
-    for tid in ids_seen:
-        cols.setdefault(depth[tid], []).append(tid)
-    ncol = max(len(cols), 1)
-    top, bottom, left, right = TASKS_TOP, TASKS_BOTTOM, 30, W - 30
-    cw = (right - left) / ncol
-    box_w = int(min(150, cw - 24))
-    rows = max((len(v) for v in cols.values()), default=1)
-    rh = (bottom - top) / rows
-    box_h = int(min(52, rh - 10))
-    pos: dict[str, tuple[int, int]] = {}
-    for c, ids in sorted(cols.items()):
-        x = int(left + cw * c + cw / 2)
-        y0 = top + (bottom - top - rh * len(ids)) / 2
-        for r, tid in enumerate(ids):
-            pos[tid] = (x, int(y0 + rh * r + rh / 2))
-    return pos, box_w, box_h
+    """Task box centres and box size on the 960x540 canvas (GIF and live page). See layout.py."""
+    lay = map_layout(tasks)
+    return lay["pos"], lay["box_w"], lay["box_h"]
+
+
+def map_layout(tasks: list[dict], **opts) -> dict:
+    """Shared task-map layout (positions + routed edges with arrowheads) for the GIF and the live page."""
+    return layout.compute(tasks, area=(16, TASKS_TOP, W - 16, TASKS_BOTTOM), **opts)
+
+
+EDGE = (148, 163, 184)
+EDGE_DONE = (196, 205, 216)   # edges out of finished tasks fade back
+EDGE_HOT = persona.TASK_EDGE_HOT
+
+
+def task_label(task: dict, bottleneck: bool, box_h: int) -> tuple[str, str, int]:
+    """Box text shared with the live page: (head line, title to wrap, max title lines).
+    Tall boxes: "T10 未着手▲" then the title on up to 2 lines."""
+    tid, title = task["id"], task["title"]
+    st = core.STATUS_LABELS_JA.get(task["status"], task["status"]) + ("▲" if bottleneck else "")
+    if box_h >= 46:
+        return f"{tid} {st}", title, 2
+    if box_h >= 34:
+        return st, f"{tid} {title}", 1
+    return "", f"{tid} {title}", 1
+
+
+def impact_distances(m: dict) -> tuple[list[str], dict[str, int]]:
+    """Top bottlenecks and, for each unfinished downstream task, its distance from them (1 = direct).
+    The GIF and the live page paint these orange (IMPACT) and the edges between them dark orange."""
+    bottlenecks = store.top_bottlenecks(m["graph"])
+    dist: dict[str, int] = {}
+    for b in bottlenecks:
+        for x in core.downstream(m["tasks"], b):
+            if x["status"] != "done":
+                dist[x["id"]] = min(dist.get(x["id"], 99), x["distance"])
+    return bottlenecks, dist
+
+
+def impact_visible(bots: dict) -> bool:
+    """Live page: show the delay impact once Risk Analyst has delivered (or the PM has answered)."""
+    return any((bots.get(k) or {}).get("status") == "done" for k in ("risk_analyst", "pm"))
 
 
 class FlowRenderer:
@@ -186,28 +200,24 @@ class FlowRenderer:
         self.font = Fonts()
         self.tasks = {t["id"]: t for t in m["tasks"]}
         self.err_ids = set(m["validation"].get("error_task_ids") or [])
-        self.bottlenecks = store.top_bottlenecks(m["graph"])
-        self.impact_dist: dict[str, int] = {}
-        for b in self.bottlenecks:
-            for x in core.downstream(m["tasks"], b):
-                if x["status"] != "done":
-                    self.impact_dist[x["id"]] = min(self.impact_dist.get(x["id"], 99), x["distance"])
+        self.bottlenecks, self.impact_dist = impact_distances(m)
         ana = m.get("analysis") or {}
-        self.actions = [a.get("text", "") for a in (ana.get("pm") or {}).get("actions", [])][:3]
         self.qr_count = len((ana.get("quality") or {}).get("items") or [])
         self._layout()
 
     def _layout(self):
-        self.pos, self.box_w, self.box_h = task_layout(list(self.tasks.values()))
+        self.lay = map_layout(list(self.tasks.values()))
+        self.pos, self.box_w, self.box_h = self.lay["pos"], self.lay["box_w"], self.lay["box_h"]
 
     # ---------- drawing ----------
 
-    def base(self, caption: str, sub: str = "") -> tuple[Image.Image, ImageDraw.ImageDraw]:
+    def base(self, caption: str, sub: str = "", rev: int | None = None) -> tuple[Image.Image, ImageDraw.ImageDraw]:
         img = Image.new("RGB", (W, H), BG)
         d = ImageDraw.Draw(img)
         head = f"TaMap ・ {self.m['title']}"
         d.text((24, 14), _fit(d, head, self.font(20), 640), font=self.font(20), fill=INK)
-        d.text((W - 24, 16), f"map_id {self.m['map_id']} ・ rev {self.m['revision']}", font=self.font(15),
+        rev = self.m["revision"] if rev is None else rev
+        d.text((W - 24, 16), f"map_id {self.m['map_id']} ・ rev {rev}", font=self.font(15),
                fill=MUTED, anchor="ra")
         _pixel_box(d, (24, CAPTION_Y - 18, W - 24, CAPTION_Y + 18), (255, 255, 255), (148, 163, 184))
         d.text((40, CAPTION_Y), _fit(d, caption, self.font(18), W - 300), font=self.font(18), fill=INK, anchor="lm")
@@ -231,8 +241,8 @@ class FlowRenderer:
             bob = -SCALE if st == "working" and phase else 0
             sx, sy = x - 8 * SCALE, SPRITE_Y + bob
             if st == "working":
-                d.rounded_rectangle((x - 62, SPRITE_Y - 8, x + 62, SPRITE_Y + 14 * SCALE + 6), radius=14,
-                                    fill=(191, 219, 254), outline=(96, 165, 250), width=2)
+                d.rounded_rectangle(glow_box(key, x), radius=14,
+                                    fill=persona.BOT_GLOW[0], outline=persona.BOT_GLOW[1], width=2)
             sprites.draw_bot(d, key, sx, sy, st, SCALE, blink=blink)
             if st == "working":
                 sprites.draw_sparkle(d, x + 46 if phase else x - 60, SPRITE_Y + (4 if phase else 26), 3)
@@ -265,45 +275,46 @@ class FlowRenderer:
         sprites.draw_envelope(d, x, y, color)
 
     def taskmap(self, d, impact_upto: int | None = None):
-        for t in self.tasks.values():
-            for dep in t["depends_on"]:
-                if dep in self.pos and t["id"] in self.pos and dep != t["id"]:
-                    (x1, y1), (x2, y2) = self.pos[dep], self.pos[t["id"]]
-                    hot = (impact_upto is not None and t["id"] in self.impact_dist
-                           and self.impact_dist[t["id"]] <= impact_upto
-                           and (dep in self.bottlenecks or dep in self.impact_dist))
-                    d.line((x1 + self.box_w / 2, y1, x2 - self.box_w / 2, y2),
-                           fill=(202, 138, 4) if hot else (148, 163, 184), width=4 if hot else 2)
-        f = self.font(14 if self.box_h >= 40 else 12)
+        for e in self.lay["edges"]:
+            dep, tid = e["from"], e["to"]
+            hot = (impact_upto is not None and tid in self.impact_dist
+                   and self.impact_dist[tid] <= impact_upto
+                   and (dep in self.bottlenecks or dep in self.impact_dist))
+            col = EDGE_HOT if hot else EDGE_DONE if self.tasks[dep]["status"] == "done" else EDGE
+            pts = [tuple(p) for p in e["points"]]
+            d.line(pts[:-1], fill=col, width=4 if hot else 2, joint="curve")  # last point = arrow tip
+            d.polygon([tuple(p) for p in e["arrow"]], fill=col)
+        f = self.font(13 if self.box_h >= 52 else 12)
+        lh = (13 if self.box_h >= 52 else 12) + 3
         for tid, (x, y) in self.pos.items():
             t = self.tasks[tid]
             hit = impact_upto is not None and self.impact_dist.get(tid, 99) <= impact_upto
-            fill = ERR if tid in self.err_ids else IMPACT if hit else TASK_FILL[t["status"]]
             bw, bh = self.box_w / 2, self.box_h / 2
             is_b = tid in self.bottlenecks
+            fill = ERR if tid in self.err_ids else IMPACT if hit else TASK_FILL.get(t["status"], TASK_FILL["todo"])
             d.rounded_rectangle((x - bw, y - bh, x + bw, y + bh), radius=8, fill=fill,
                                 outline=(124, 45, 18) if is_b else (75, 85, 99), width=4 if is_b else 1)
             txt = INK if fill in (IMPACT, TASK_FILL["todo"]) else (255, 255, 255)
-            line1 = _fit(d, f"{tid} {t['title']}", f, self.box_w - 12)
-            line2 = core.STATUS_LABELS_JA[t["status"]] + (" ▲" if is_b else "")
-            if self.box_h >= 34:
-                _center(d, (x, y - 9), line1, f, txt)
-                _center(d, (x, y + 10), line2, f, txt)
-            else:
-                _center(d, (x, y), line1, f, txt)
-
-    def actions_panel(self, d):
-        if not self.actions:
-            return
-        f = self.font(16)
-        h = 44 + 28 * len(self.actions)
-        x0, y0 = 300, H - 18 - h
-        _pixel_box(d, (x0, y0, W - 24, H - 18), (255, 255, 255), (37, 99, 235))
-        d.text((x0 + 16, y0 + 12), "次の3アクション", font=self.font(17), fill=(30, 64, 175))
-        for i, a in enumerate(self.actions):
-            d.text((x0 + 16, y0 + 40 + 28 * i), _fit(d, f"{i + 1}. {a}", f, W - x0 - 64), font=f, fill=INK)
+            head, body, nmax = task_label(t, is_b, self.box_h)
+            lines = _wrap(d, body, f, self.box_w - 10, nmax)
+            head = _fit(d, head, f, self.box_w - 8) if head else head
+            if head and nmax == 2:
+                lines = [head] + lines
+            elif head:
+                lines = lines + [head]
+            y0 = y - lh * (len(lines) - 1) / 2
+            for k, ln in enumerate(lines):
+                _center(d, (x, y0 + lh * k), ln, f, txt)
 
     # ---------- frames ----------
+
+    def revision_at(self, iso: str | None) -> int:
+        """Map revision in effect at a given time (from the revision history); latest if unknown."""
+        if not iso:
+            return self.m["revision"]
+        revs = [h["revision"] for h in self.m.get("history") or [] if h.get("updated_at") and h["updated_at"] <= iso]
+        return max(revs) if revs else min((h["revision"] for h in self.m.get("history") or []),
+                                          default=self.m["revision"])
 
     def frames(self, events: list[dict]) -> tuple[list[Image.Image], list[int]]:
         imgs: list[Image.Image] = []
@@ -311,46 +322,53 @@ class FlowRenderer:
         state: dict[str, dict] = {}
         flags = {"badge": False}
 
-        def frame(caption, sub, speaker=None, env=None, impact=None, panel=False, ms=100, phase=0, blink=False):
-            img, d = self.base(caption, sub)
+        def frame(caption, sub, speaker=None, env=None, impact=None, panel=False, ms=100, phase=0, blink=False,
+                  rev=None):
+            img, d = self.base(caption, sub, rev)
             self.bots(d, state, flags["badge"], speaker, phase, blink)
             if env:
                 self.envelope(d, *env)
-            self.taskmap(d, impact)
-            if panel:
-                self.actions_panel(d)
+            self.taskmap(d, impact)  # no action list at the end (the GIF shows the AI's analysis, not a TODO list)
+            # metadata for tests (not written to the GIF)
+            img.info["tamap"] = {"caption": caption, "state": {k: v["status"] for k, v in state.items()},
+                                 "rev": self.m["revision"] if rev is None else rev, "panel": False,
+                                 "taskmap": True}
             imgs.append(img)
             durs.append(ms)
 
-        def hold(caption, sub, speaker=None, impact=None, panel=False, ms=1100):
-            frame(caption, sub, speaker, None, impact, panel, int(ms * 0.45), 0)
-            frame(caption, sub, speaker, None, impact, panel, int(ms * 0.4), 1)
-            frame(caption, sub, speaker, None, impact, panel, ms - int(ms * 0.45) - int(ms * 0.4), 0, True)
+        def hold(caption, sub, speaker=None, impact=None, panel=False, ms=1100, rev=None):
+            frame(caption, sub, speaker, None, impact, panel, int(ms * 0.45), 0, rev=rev)
+            frame(caption, sub, speaker, None, impact, panel, int(ms * 0.4), 1, rev=rev)
+            frame(caption, sub, speaker, None, impact, panel, ms - int(ms * 0.45) - int(ms * 0.4), 0, True, rev=rev)
 
-        hold("PMに話しかけると、3体の専門Botが順に分析します", "", ("pm", "TaMap チーム、出動します！"), ms=1400)
+        first_rev = self.revision_at(events[0].get("at")) if events else None
+        hold("PMに話しかけると、3体の専門Botが順に分析します", "", ("pm", "TaMap チーム、出動します！"), ms=1400,
+             rev=first_rev)
         for i, ev in enumerate(events):
             bot, st = ev["bot"], ev["status"]
-            if bot != "pm" and st == "working":
-                state["pm"] = {"status": "idle"}
+            rev = self.revision_at(ev.get("at"))
             name = store.BOT_NAMES[bot]
             note = f"：{ev['note']}" if ev.get("note") else ""
             caption = f"{name} {BOT_STATUS_JA[st]}{note}"
             sub = f"{hms(ev.get('at'))} JST ・ {i + 1}/{len(events)}"
             speaker = (bot, persona.line(bot, st, ev.get("say"), self.qr_count))
-            env = None
+            # The caption always matches what the cards show: while a request is travelling the receiver
+            # is not working yet (caption = the hand-off); a result travels after the sender is done.
             if bot == "pm" and st == "working" and i == 0:
-                env = ("user", "pm", REQUEST)
-            elif bot != "pm" and st == "working":
-                env = ("pm", bot, REQUEST)
-            elif bot != "pm" and st in ("done", "error"):
-                env = (bot, "pm", RESULT if st == "done" else ERR)
-            if env:
                 for k in range(1, 9):
-                    frame(caption, sub, None, (env[0], env[1], k / 9, env[2]))
+                    frame("ユーザー → TaMap PM に依頼", sub, None, ("user", "pm", k / 9, REQUEST), rev=rev)
+            elif bot != "pm" and st == "working":
+                state["pm"] = {"status": "idle"}
+                for k in range(1, 9):
+                    frame(f"TaMap PM → {name} に依頼", sub, None, ("pm", bot, k / 9, REQUEST), rev=rev)
+            elif bot != "pm" and st in ("done", "error"):
+                state[bot] = {"status": st}
+                for k in range(1, 9):
+                    frame(caption, sub, None, (bot, "pm", k / 9, RESULT if st == "done" else BOT_ERR), rev=rev)
             state[bot] = {"status": st}
-            hold(caption, sub, speaker)
             if bot == "quality_reviewer" and st == "done":
                 flags["badge"] = True
+            hold(caption, sub, speaker, rev=rev)
         if self.bottlenecks:
             names = "・".join(self.bottlenecks)
             ra = ("risk_analyst", f"{names}、あやしいかも…")
@@ -359,8 +377,7 @@ class FlowRenderer:
                 ids = "・".join(t for t, dd in self.impact_dist.items() if dd <= k)
                 hold(f"{names} が遅れると {ids} に影響（{k}段先まで）", "TaMap Core の計算", ra, impact=k)
         final = max(self.impact_dist.values(), default=0) if self.bottlenecks else None
-        hold("結果：次の3アクション" if self.actions else "結果", "", ("pm", persona.line("pm", "done")),
-             impact=final, panel=True, ms=3500)
+        hold(ALL_DONE_CAPTION, "", ("pm", persona.line("pm", "done")), impact=final, ms=3500)
         return imgs, durs
 
 

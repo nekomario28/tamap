@@ -19,13 +19,18 @@ ERROR_LABELS = {
     "invalid_depends_on": "不正な依存先",
 }
 STATUS_CLASS = {"done": "done", "in_progress": "prog", "todo": "todo", "blocked": "blocked"}
+P = persona
+_TASK_CLS = {"done": "done", "prog": "in_progress", "todo": "todo", "blocked": "blocked"}
 CLASSDEFS = [
-    "  classDef done fill:#22c55e,stroke:#15803d,color:#ffffff",
-    "  classDef prog fill:#3b82f6,stroke:#1d4ed8,color:#ffffff",
-    "  classDef todo fill:#9ca3af,stroke:#4b5563,color:#111827",
-    "  classDef blocked fill:#f97316,stroke:#c2410c,color:#ffffff",
-    "  classDef impact fill:#facc15,stroke:#a16207,color:#111827",
-    "  classDef err fill:#ef4444,stroke:#991b1b,color:#ffffff",
+    f"  classDef {c} fill:{P.hexc(P.TASK_COLORS[k])},stroke:{P.hexc(P.TASK_STROKE[k])},"
+    f"color:{'#111827' if k in P.TASK_INK_ON else '#ffffff'}" for c, k in _TASK_CLS.items()
+] + [
+    f"  classDef impact fill:{P.hexc(P.TASK_IMPACT)},stroke:{P.hexc(P.TASK_IMPACT_STROKE)},color:#111827",
+    f"  classDef err fill:{P.hexc(P.TASK_ERR)},stroke:{P.hexc(P.TASK_ERR_STROKE)},color:#ffffff",
+]
+BOT_CLASSDEFS = [
+    f"  classDef {k} fill:{P.hexc(P.BOT_COLORS[k])},stroke:{P.hexc(P.BOT_STROKE[k])},"
+    f"color:{'#111827' if k == 'idle' else '#ffffff'}" for k in ("idle", "working", "done", "error")
 ]
 
 
@@ -164,11 +169,11 @@ def mermaid_map(m: dict, whatif: dict | None = None) -> str:
         if tid in node and tid not in err_ids:
             lines.append(f"  style {node[tid]} stroke:#7c2d12,stroke-width:4px,stroke-dasharray:6 3")
     if origin in node:
-        lines.append(f"  style {node[origin]} stroke:#ca8a04,stroke-width:5px")
+        lines.append(f"  style {node[origin]} stroke:{P.hexc(P.TASK_EDGE_HOT)},stroke-width:5px")
     if red:
-        lines.append(f"  linkStyle {','.join(map(str, red))} stroke:#ef4444,stroke-width:3px,stroke-dasharray:5 4")
+        lines.append(f"  linkStyle {','.join(map(str, red))} stroke:{P.hexc(P.TASK_STROKE['blocked'])},stroke-width:3px,stroke-dasharray:5 4")
     if yellow:
-        lines.append(f"  linkStyle {','.join(map(str, yellow))} stroke:#ca8a04,stroke-width:4px")
+        lines.append(f"  linkStyle {','.join(map(str, yellow))} stroke:{P.hexc(P.TASK_EDGE_HOT)},stroke-width:4px")
     lines.append("```")
     return "\n".join(lines)
 
@@ -192,7 +197,7 @@ def render_map(m: dict, whatif: dict | None = None, diff: dict | None = None) ->
 BOTS = [("pm", "TaMap PM"), ("map_architect", "Map Architect"),
         ("risk_analyst", "Risk Analyst"), ("quality_reviewer", "Quality Reviewer")]
 BOT_LABEL = dict(BOTS)
-BOT_STATUS_JA = {"idle": "待機", "working": "作業中", "done": "完了", "error": "エラー"}
+BOT_STATUS_JA = persona.BOT_STATUS_JA
 BOT_NODE = {"pm": "PM", "map_architect": "MA", "risk_analyst": "RA", "quality_reviewer": "QR"}
 
 
@@ -216,10 +221,7 @@ def render_status(m: dict, history_limit: int = 5) -> str:
     for a, b, lab in edges:
         lines.append(f"  {a} -- {lab} --> {b}")
     lines += [
-        "  classDef idle fill:#9ca3af,stroke:#4b5563,color:#111827",
-        "  classDef working fill:#3b82f6,stroke:#1d4ed8,color:#ffffff",
-        "  classDef done fill:#22c55e,stroke:#15803d,color:#ffffff",
-        "  classDef error fill:#ef4444,stroke:#991b1b,color:#ffffff",
+        *BOT_CLASSDEFS,
         "  classDef user fill:#ffffff,stroke:#4b5563,color:#111827",
         "  class U user",
     ]
@@ -239,7 +241,7 @@ def render_status(m: dict, history_limit: int = 5) -> str:
         else:
             thick.append({"MA": 1, "RA": 2, "QR": 3}[node])
     if thick:
-        lines.append(f"  linkStyle {','.join(map(str, sorted(set(thick))))} stroke:#2563eb,stroke-width:5px")
+        lines.append(f"  linkStyle {','.join(map(str, sorted(set(thick))))} stroke:{P.hexc(P.BOT_LINK_HOT)},stroke-width:5px")
     lines.append("```")
     hist = (m.get("bot_history") or [])[-history_limit:]
     tail = [f"map `{m['map_id']}` のBot稼働状況 ・ 直近の変更（新しい順）:" if hist else f"map `{m['map_id']}` のBot稼働状況 ・ 変更履歴なし"]
