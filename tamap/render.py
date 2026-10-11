@@ -1,7 +1,8 @@
 """Render TaMap state as mermaid diagrams to paste into the Grok Bot chat as-is.
 
 - render_map(): task map (graph LR). Notes (merge point / bottleneck / delay impact / validation
-  errors) are expressed with node labels, colours and edge styles; one revision line below.
+  errors) are expressed with node labels, colours and edge styles; one revision line below
+  (after update_map, a one-line diff above the block).
 - render_status(): bot activity flowchart (User → PM → Map Architect → Risk Analyst → Quality Reviewer → PM)
   plus a few recent status changes below.
 """
@@ -9,7 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from . import core
+from . import core, persona
 
 JST = timezone(timedelta(hours=9))
 ERROR_LABELS = {
@@ -180,8 +181,10 @@ def footer(m: dict, whatif: dict | None = None) -> str:
             f"{check}{extra}")
 
 
-def render_map(m: dict, whatif: dict | None = None) -> str:
-    return mermaid_map(m, whatif) + "\n" + footer(m, whatif)
+def render_map(m: dict, whatif: dict | None = None, diff: dict | None = None) -> str:
+    """Mermaid block + revision line. With diff (update_map), the one-line diff goes on top (UX_DESIGN 4.5)."""
+    head = f"{diff['text']}\n\n" if diff else ""
+    return head + mermaid_map(m, whatif) + "\n" + footer(m, whatif)
 
 
 # ---------- bot status ----------
@@ -198,7 +201,10 @@ def render_status(m: dict, history_limit: int = 5) -> str:
     lines = ["```mermaid", "flowchart LR", '  U(["ユーザー"])']
     for key, label in BOTS:
         b = bots.get(key) or {"status": "idle"}
-        parts = [label, BOT_STATUS_JA[b["status"]]]
+        p = persona.PERSONAS[key]
+        parts = [f"{p['emoji']} {label}", f"{mm_text(persona.FACES[b['status']])} {BOT_STATUS_JA[b['status']]}"]
+        if b["status"] in ("working", "error"):
+            parts.append(f"「{mm_text(persona.line(key, b['status'], b.get('say')))}」")
         if b.get("note"):
             parts.append(mm_text(_short(b["note"], 36)))
         if b.get("updated_at"):

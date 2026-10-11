@@ -1,4 +1,4 @@
-"""TaMap UI Bridge MCP server (stdio) - mermaid-first output for use inside the Grok Bot chat.
+"""TaMap MCP server (stdio) - mermaid-first output for use inside the Grok Bot chat.
 
 Every map/status tool returns, as its text content, a ```mermaid block (+ one short line or a few
 history lines below) that the PM Bot pastes into the chat as-is. Machine-readable fields
@@ -11,7 +11,9 @@ from __future__ import annotations
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent
 
-from . import core, render, store
+import urllib.request
+
+from . import animate, core, live, persona, render, store
 
 mcp = FastMCP(
     "tamap",
@@ -19,11 +21,16 @@ mcp = FastMCP(
         "TaMap: task dependency map. create_map registers tasks and returns a mermaid graph to paste into the chat "
         "as-is. update_map needs expected_revision (stale updates are rejected). get_map shows the current state, "
         "simulate_delay shows which tasks a delay would reach (read-only), list_maps lists maps. "
-        "set_bot_status records pm/map_architect/risk_analyst/quality_reviewer as idle/working/done/error; "
-        "get_status returns a mermaid flowchart of bot activity - post it at each hand-off. "
+        "set_bot_status records pm/map_architect/risk_analyst/quality_reviewer as idle/working/done/error "
+        "(a specialist going working puts the PM back to idle automatically); record it at each hand-off but do "
+        "not post the flowchart except on errors or when the user asks (get_status). render_flow_gif replays the "
+        "last cycle as out/<map_id>_flow.gif to attach to the result message; the bots appear as pixel characters and "
+        "set_bot_status(say=...) is their speech bubble. render_team_card makes out/tamap_team.gif for the greeting. "
+        "get_live_url gives an optional read-only live page (scripts/live_view.sh) where the bots move in real time. "
         "Task status: done/in_progress/todo/blocked. Validation (duplicate ids, unknown references, cycles) is "
         "computed by deterministic code; do not override it in prose. Optional analysis = {pm:{summary, actions"
-        "(max 3)}, map_architect:{summary}, risk:{summary, items}, quality:{summary, items}, assumptions:[...]}."
+        "(max 3)}, map_architect:{summary}, risk:{summary, items}, quality:{summary, items:[{before, text, "
+        "reason}]}, assumptions:[...]}."
     ),
 )
 
@@ -60,7 +67,7 @@ def create_map(title: str, tasks: list[dict], analysis: dict | None = None,
     """
     try:
         m = store.create_map(title, tasks, analysis, source)
-        return _ok(render.render_map(m), **_meta(m))
+        return _ok(render.render_map(m), **_meta(m), live_url=live.live_url(m["map_id"]))
     except Exception as e:  # noqa: BLE001
         return _fail(e)
 
@@ -71,11 +78,14 @@ def update_map(map_id: str, expected_revision: int, tasks: list[dict] | None = N
                title: str | None = None) -> CallToolResult:
     """Update a map (tasks replaces the whole list; analysis replaces the whole analysis).
 
-    Rejected with revision_conflict if expected_revision != current revision: call get_map and retry.
+    Text result = one diff line (変更点 ／ ボトルネック ／ 影響先) + mermaid graph + revision line; the same
+    diff is in structuredContent.diff. Rejected with revision_conflict if expected_revision != current
+    revision: call get_map and retry.
     """
     try:
         m = store.update_map(map_id, expected_revision, tasks, analysis, source, title)
-        return _ok(render.render_map(m), **_meta(m))
+        diff = m.get("last_diff")
+        return _ok(render.render_map(m, diff=diff), **_meta(m), diff=diff)
     except Exception as e:  # noqa: BLE001
         return _fail(e)
 
@@ -120,15 +130,18 @@ def list_maps() -> CallToolResult:
 
 
 @mcp.tool()
-def set_bot_status(map_id: str, bot: str, status: str, note: str | None = None) -> CallToolResult:
-    """Record a bot's state on a map and return the bot-activity flowchart (mermaid) to post in the chat.
+def set_bot_status(map_id: str, bot: str, status: str, note: str | None = None,
+                   say: str | None = None) -> CallToolResult:
+    """Record a bot's state on a map and return the bot-activity flowchart (mermaid).
 
     bot: pm | map_architect | risk_analyst | quality_reviewer
-    status: idle | working | done | error     note: short free text (optional)
-    Does not change the map revision.
+    status: idle | working | done | error     note: short factual text (optional)
+    say: optional in-character one-liner (<=30 chars) for the flow GIF speech bubble
+    When a non-pm bot becomes working, pm is set to idle (note「<Bot>の結果待ち」) automatically.
+    Does not change the map revision. Post the flowchart only on errors (the result uses the flow GIF).
     """
     try:
-        m = store.set_bot_status(map_id, bot, status, note)
+        m = store.set_bot_status(map_id, bot, status, note, say)
         return _ok(render.render_status(m), map_id=map_id, bots=m["bots"], bot_history=m["bot_history"][-5:])
     except Exception as e:  # noqa: BLE001
         return _fail(e)
@@ -141,6 +154,65 @@ def get_status(map_id: str) -> CallToolResult:
         m = store.read_map(map_id)
         return _ok(render.render_status(m), map_id=map_id, bots=m.get("bots") or {},
                    bot_history=(m.get("bot_history") or [])[-5:])
+    except Exception as e:  # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def render_flow_gif(map_id: str) -> CallToolResult:
+    """Render the last bot cycle (bot_history) as an animated GIF at out/<map_id>_flow.gif; attach it in the chat.
+
+    Text result = one line with the file path. Does not change the map revision.
+    """
+    try:
+        m = store.read_map(map_id)
+        r = animate.render_flow_gif(m)
+        text = (f"▶ 流れのGIF: `{r['path']}`（約{round(r['duration_ms'] / 1000)}秒・Bot履歴{r['events']}件）")
+        if r["font_fallback"]:
+            text += " ※日本語フォントが見つからず、文字が化けている可能性があります（TAMAP_FONT で指定可）"
+        return _ok(text, map_id=map_id, revision=m["revision"], gif_path=r["path"], frames=r["frames"],
+                   duration_ms=r["duration_ms"], events=r["events"], font=r["font"])
+    except Exception as e:  # noqa: BLE001
+        return _fail(e)
+
+
+def _live_running() -> bool:
+    try:
+        with urllib.request.urlopen(live.base_url() + "/healthz", timeout=0.5) as r:
+            return r.status == 200
+    except OSError:
+        return False
+
+
+@mcp.tool()
+def get_live_url(map_id: str) -> CallToolResult:
+    """URL of the read-only live page where the 4 pixel bots move with this map's bot_history in real time.
+
+    Served by scripts/live_view.sh on the box (default http://127.0.0.1:8765, only reachable from the box
+    unless it is exposed separately). Text result = one line; structured data has live_url and running.
+    """
+    try:
+        m = store.read_map(map_id)
+        url = live.live_url(map_id)
+        running = _live_running()
+        text = f"▶ ライブページ（閲覧専用）: {url}" + ("" if running else "（ライブページのサーバーが起動していません: scripts/live_view.sh）")
+        return _ok(text, map_id=map_id, revision=m["revision"], live_url=url, running=running)
+    except Exception as e:  # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def render_team_card() -> CallToolResult:
+    """Render the team introduction GIF (out/tamap_team.gif): the 4 bots as pixel characters with role and
+    catchphrase. Attach it to the PM's first greeting. Text result = one line with the file path."""
+    try:
+        r = animate.render_team_card()
+        text = f"▶ チーム紹介のGIF: `{r['path']}`"
+        if r["font_fallback"]:
+            text += " ※日本語フォントが見つからず、文字が化けている可能性があります（TAMAP_FONT で指定可）"
+        personas = {k: {f: p[f] for f in ("name", "emoji", "role", "motif", "trait", "lines")}
+                    for k, p in persona.PERSONAS.items()}
+        return _ok(text, gif_path=r["path"], frames=r["frames"], font=r["font"], personas=personas)
     except Exception as e:  # noqa: BLE001
         return _fail(e)
 

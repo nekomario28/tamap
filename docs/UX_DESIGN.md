@@ -234,7 +234,7 @@ READMEの検証チェックリストとの対応：Bot間の引き継ぎ（GIF�
 
 ## 8. 実装への変更リスト（優先度順・残り約2時間半で行う分）
 
-- **P0（15分）疎通確認｜Grok Bot のチャット**：`create_map` の mermaid（classDef/linkStyle/`<br>`）が描画されるか、`out/JbeSRnxW_flow.gif` を添付して再生できるか確認する。描画されなければ、render.py の `<br>` を半角スペースに変え、色は classDef だけ残す。GIFが再生できなければ、`out/frames/*.png` から3〜4枚（例 `frame_050`／`frame_137`／`frame_224`／`frame_274`）を静止画として添付する。
+- **P0（15分）疎通確認｜Grok Bot のチャット**：`create_map` の mermaid（classDef/linkStyle/`<br>`）が描画されるか、`out/JbeSRnxW_flow.gif` を添付して再生できるか確認する。描画されなければ、render.py の `<br>` を半角スペースに変え、色は classDef だけ残す。GIFが再生できなければ、GIF から3〜4フレームを PNG に取り出して静止画として添付する（現在の `render_flow_gif` は `out/{map_id}_flow.gif` だけを書き、PNG のフレームは出力しない）。
 - **P1（25分）PMの指示文を書き直す｜TaMap PM の Bot 指示文**：①1回の分析で投稿は2つ（開始の1行・結果）、途中の稼働図は投稿しない ②結果の要素順と文言テンプレート（4.2）③結果の最後には必ず質問ウィジェット（4.2のボタン5つ）④What-if と状態変更は軽い経路（simulate_delay／update_map のみ、専門Botを回さない）⑤聞き返しは最大1回、矛盾は仮置きして⚠️の1行（3章）⑥専門Botに依頼した直後に `set_bot_status(pm, idle, "<Bot>の結果待ち")` ⑦60秒無応答のときのエラー処理と、revision競合のときに1回だけ再適用（6章）⑧ボタンの文「サンプル（タスク管理アプリ T1〜T7）で試す」を受けたらREADMEの入力例を使う。
 - **P2（15分）光るのを1体にする｜`tamap/store.py` set_bot_status、`tests/e2e_mcp.py`**：pm 以外のBotが `working` になったら、pm を自動で `idle`（note「結果待ち」）にする（P1の指示文に頼らず、コード側で保証する）。`tamap/animate.py` もPMの依頼の後はPMを待機で描くようにする。テストを1件追加する。
 - **P3（20分）revisionの差分の1行｜`tamap/store.py` update_map、`tamap/render.py`**：前のスナップショット（history）と比べ、`変更点：T3 進行中→完了 ／ ボトルネック：T3→T4 ／ 影響先：変化なし` を revision 行の上に出す。structuredContent に `diff` を入れる。e2e に1件追加する。
@@ -242,4 +242,5 @@ READMEの検証チェックリストとの対応：Bot間の引き継ぎ（GIF�
 - **P5（20分）デモの準備｜データとリハーサル**：新しいマップでサンプル入力から1周を回し（P1・P2の反映後）、GIFを作り直す。`bot_history` が1周分だけであることを確認する。台本どおり2回通しでリハーサルし、時間を計る。予備のGIFとスクリーンショットを保存する。
 - **P6（10分）専門Botの指示文｜Map Architect／Risk Analyst／Quality Reviewer**：結果は短く（MA：タスクとstatusの変更点、RA：影響の起点のIDと対処案3件、QR：before/after形式の指摘）。PMの前で長文を書かない。入力に無い数値は出さない。
 - **P7（10分）READMEの整合｜`README.md`**：URL／view_id を map_id／revision に置き換え、チェックリストの項目を、チャット内で完結する現在の方式に合わせて書き直す（「Mainから画面URLを取得」→「Mainからmap_idと最新の図を取得」）。動作を確認したことだけにチェックを付ける。
+- **追加（2026-10-11、Yuu さんの決定）閲覧専用のライブページ**：`bot_history` に合わせて 4 体のドット絵が動く `/live/{map_id}`（`docs/LIVE_VIEW.md`）。チャット内完結の例外だが、この設計書のチャットの流れ（投稿 2 つ、結果の GIF）は変えない。
 - **後回し（今回はやらない）**：エラー用のボタンの自動生成、日数の計算、GitHub連携、定期実行での再評価。

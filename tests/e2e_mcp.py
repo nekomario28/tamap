@@ -5,7 +5,12 @@ Usage: uv run python tests/e2e_mcp.py   (exits non-zero on failure)
 """
 import asyncio
 import json
+import http.client
 import os
+import socket
+import subprocess
+import threading
+import time
 import sys
 import tempfile
 from pathlib import Path
@@ -16,7 +21,17 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 ROOT = Path(__file__).resolve().parent.parent
 # Use a throwaway data dir unless TAMAP_E2E_KEEP=1 (then the real data/maps is used).
 DATA_DIR = None if os.environ.get("TAMAP_E2E_KEEP") else tempfile.mkdtemp(prefix="tamap-e2e-")
-ENV = {**os.environ, **({"TAMAP_DATA_DIR": DATA_DIR} if DATA_DIR else {})}
+def _free_port() -> int:
+    with socket.socket() as so:
+        so.bind(("127.0.0.1", 0))
+        return so.getsockname()[1]
+
+
+LIVE_PORT = _free_port()
+ENV = {**os.environ, "TAMAP_LIVE_PORT": str(LIVE_PORT),
+       **({"TAMAP_DATA_DIR": DATA_DIR, "TAMAP_OUT_DIR": os.path.join(DATA_DIR, "out")} if DATA_DIR else {})}
+ENV.pop("TAMAP_LIVE_TOKEN", None)
+ENV.pop("TAMAP_LIVE_BASE_URL", None)
 SERVER = StdioServerParameters(command=str(ROOT / "scripts" / "mcp_server.sh"), args=[], env=ENV)
 
 failed = False
@@ -38,6 +53,72 @@ async def call(s, name, args, label=None):
     return res, md, data
 
 
+def live_checks(mid: str) -> None:
+    """scripts/live_view.sh: read-only, and a set_bot_status (via tamap_cli.sh) reaches the page over SSE."""
+    proc = subprocess.Popen([str(ROOT / "scripts" / "live_view.sh"), "--port", str(LIVE_PORT)], cwd="/tmp", env=ENV,
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    try:
+        check("http://127.0.0.1:" in proc.stdout.readline(), "live_view.sh started")
+
+        def req(method, path):
+            c = http.client.HTTPConnection("127.0.0.1", LIVE_PORT, timeout=5)
+            c.request(method, path)
+            r = c.getresponse()
+            body = r.read()
+            c.close()
+            return r.status, body
+
+        st, body = req("GET", f"/live/{mid}")
+        check(st == 200 and b"EventSource" in body, "GET /live/{map_id} -> page")
+        f = Path(ENV.get("TAMAP_DATA_DIR") or ROOT / "data" / "maps") / f"{mid}.json"
+        before = f.read_bytes()
+        check(all(req(m, f"/api/maps/{mid}")[0] == 405 for m in ("POST", "PUT", "DELETE", "PATCH")),
+              "live page rejects write methods (405)")
+        check(f.read_bytes() == before, "live page did not modify the map file")
+        p = subprocess.run([str(ROOT / "scripts" / "tamap_cli.sh"), "get_live_url", json.dumps({"map_id": mid})],
+                           env=ENV, capture_output=True, text=True, timeout=60)
+        check(p.returncode == 0 and json.loads(p.stderr)["running"] is True, "get_live_url: running")
+
+        c = http.client.HTTPConnection("127.0.0.1", LIVE_PORT, timeout=10)
+        c.request("GET", f"/events/{mid}")
+        r = c.getresponse()
+        got: list[dict] = []
+
+        def reader():
+            data = None
+            try:
+                for raw in r.fp:
+                    line = raw.decode()
+                    if line.startswith("data: "):
+                        data = json.loads(line[6:])
+                    elif line == "\n" and data is not None:
+                        got.append(data)
+                        data = None
+            except (OSError, ValueError):
+                pass
+
+        threading.Thread(target=reader, daemon=True).start()
+        deadline = time.monotonic() + 5
+        while not got and time.monotonic() < deadline:
+            time.sleep(0.05)
+        check(len(got) == 1, "SSE sends the current snapshot on connect")
+        t0 = time.monotonic()
+        subprocess.run([str(ROOT / "scripts" / "tamap_cli.sh"), "set_bot_status",
+                        json.dumps({"map_id": mid, "bot": "quality_reviewer", "status": "working",
+                                    "note": "SSE確認", "say": "ちょっとだけ見るね"})],
+                       env=ENV, capture_output=True, text=True, timeout=60)
+        while len(got) < 2 and time.monotonic() < t0 + 5:
+            time.sleep(0.05)
+        last = got[-1] if got else {}
+        check(len(got) >= 2 and last["bots"]["quality_reviewer"]["status"] == "working"
+              and last["events"][-1]["say"] == "ちょっとだけ見るね",
+              f"SSE pushes set_bot_status (CLI call + push {time.monotonic() - t0:.2f}s)")
+        c.close()
+    finally:
+        proc.terminate()
+        proc.wait(timeout=10)
+
+
 async def main():
     sample = json.loads((ROOT / "samples" / "readme_example.json").read_text())
     broken = json.loads((ROOT / "samples" / "broken_example.json").read_text())
@@ -45,7 +126,8 @@ async def main():
         async with ClientSession(r, w) as s:
             await s.initialize()
             tools = sorted(t.name for t in (await s.list_tools()).tools)
-            check(tools == ["create_map", "get_map", "get_status", "list_maps", "set_bot_status", "simulate_delay", "update_map"], f"tools: {tools}")
+            check(tools == ["create_map", "get_live_url", "get_map", "get_status", "list_maps", "render_flow_gif",
+                            "render_team_card", "set_bot_status", "simulate_delay", "update_map"], f"tools: {tools}")
 
             analysis = {
                 "pm": {"summary": "T6がT4系列とT5系列の合流点。T3→T4→T6→T7が最長の未完了チェーン。",
@@ -59,6 +141,10 @@ async def main():
                                     "create_map（README例）")
             mid = d["map_id"]
             check(not res.isError and d["revision"] == 1 and d["ok"], "create_map: rev1, 検証OK")
+            check(d.get("live_url") == f"http://127.0.0.1:{LIVE_PORT}/live/{mid}", f"create_map live_url {d.get('live_url')}")
+            lres, lmd, ld = await call(s, "get_live_url", {"map_id": mid})
+            check(not lres.isError and ld["running"] is False and "起動していません" in lmd
+                  and ld["live_url"] == d["live_url"], "get_live_url: same URL, not running yet")
             check(md.startswith("```mermaid\ngraph LR") and md.count("```") == 2, "chat text is a single mermaid block")
             tail = md.rsplit("```", 1)[1].strip()
             check(tail.startswith("revision 1 ・ map_id") and "\n" not in tail, f"one revision line below: {tail}")
@@ -73,6 +159,11 @@ async def main():
                                                       "source": "e2e test: T4 blocked"}, "update_map（T4をブロック中に）")
             check(not res.isError and d["revision"] == 2, "update_map: rev2")
             check('T4 API実装<br>ブロック中<br>▲ボトルネック"]' in md and "blocked" in md, "T4 blocked -> ボトルネック, orange")
+            diff_line = "変更点：T4 未着手→ブロック中 ／ ボトルネック：T3→T4 ／ 影響先：T4・T6・T7→T6・T7"
+            check(md.startswith(diff_line + "\n\n```mermaid\ngraph LR"), f"diff line above the map: {md.splitlines()[0]}")
+            check(md.rsplit("```", 1)[1].strip().startswith("revision 2 ・"), "revision line still last")
+            check((d.get("diff") or {}).get("text") == diff_line and d["diff"]["bottleneck"]["changed"]
+                  and d["diff"]["from_revision"] == 1 and d["diff"]["to_revision"] == 2, "structured: diff")
 
             res, md, d = await call(s, "update_map", {"map_id": mid, "expected_revision": 1, "tasks": sample["tasks"],
                                                       "source": "stale writer"}, "update_map（古いrevisionで更新 → 拒否）")
@@ -80,6 +171,7 @@ async def main():
 
             res, md, d = await call(s, "get_map", {"map_id": mid}, "get_map")
             check(not res.isError and d["revision"] == 2 and "revision 2 ・" in md, "get_map: rev2")
+            check(md.startswith("```mermaid") and "diff" not in d, "get_map has no diff line")
 
             res, md, d = await call(s, "simulate_delay", {"map_id": mid, "task_id": "T4"}, "simulate_delay（T4）")
             check(d.get("impacted_ids") == ["T6", "T7"], f"T4 delay impacts T6,T7 ({d.get('impacted_ids')})")
@@ -90,8 +182,19 @@ async def main():
             check(d2["revision"] == 2, "simulate_delay did not change revision")
 
             # Bot status flow
-            steps = [("pm", "working", "依頼を受けて分解を依頼"), ("pm", "idle", None),
-                     ("map_architect", "working", "T1〜T7を構造化中"), ("map_architect", "done", "7タスク・7依存"),
+            res, md, d = await call(s, "set_bot_status", {"map_id": mid, "bot": "pm", "status": "working",
+                                                          "note": "依頼を受付"})
+            res, md, d = await call(s, "set_bot_status", {"map_id": mid, "bot": "map_architect", "status": "working",
+                                                          "note": "T1〜T7を構造化中", "say": "線、7本つなぐっす。"},
+                                    "set_bot_status（MA作業中 → PMは自動で待機）")
+            check('"🗺️ Map Architect<br>(•ω•)✧ 作業中<br>「線、7本つなぐっす。」' in md
+                  and d["bot_history"][-1].get("say") == "線、7本つなぐっす。", "character face + say in status chart")
+            check(d["bots"]["pm"]["status"] == "idle" and d["bots"]["pm"]["note"] == "Map Architectの結果待ち",
+                  "specialist working -> pm idle (結果待ち) automatically")
+            check("class PM,RA,QR idle" in md and "class MA working" in md, "only MA lit in flowchart")
+            check([(h["bot"], h["status"]) for h in d["bot_history"][-3:]]
+                  == [("pm", "working"), ("pm", "idle"), ("map_architect", "working")], "auto pm idle in history")
+            steps = [("map_architect", "done", "7タスク・7依存"),
                      ("risk_analyst", "working", "T4遅延の波及を分析中")]
             for i, (bot, st, note) in enumerate(steps):
                 label = "set_bot_status（Risk Analyst 作業中）" if i == len(steps) - 1 else None
@@ -116,6 +219,43 @@ async def main():
             check(res.isError, "unknown status rejected")
             res, md, d = await call(s, "get_map", {"map_id": mid})
             check(d["revision"] == 2, "bot status does not change map revision")
+            res, md, d = await call(s, "set_bot_status", {"map_id": mid, "bot": "pm", "status": "done"})
+
+            # T3 done + QR before/after (UX_DESIGN 4.5 / 4.3)
+            tasks3 = [dict(t, status="done") if t["id"] == "T3" else t for t in tasks2]
+            qa = {"pm": {"summary": "ボトルネックはT4", "actions": ["T4のブロック理由を確認する"]},
+                  "quality": {"summary": "2件修正", "items": [
+                      {"before": "T4の遅れの原因はDB設計", "text": "原因はDB設計の可能性あり（推定・未確認）",
+                       "reason": "断定しすぎ"},
+                      {"before": "モックで並行開発する", "text": "T5→T4の依存がある場合のみモックで進める"}]}}
+            res, md, d = await call(s, "update_map", {"map_id": mid, "expected_revision": 2, "tasks": tasks3,
+                                                      "analysis": qa, "source": "e2e test: T3 done"},
+                                    "update_map（T3を完了に・差分の1行）")
+            check(not res.isError and d["revision"] == 3, "update_map: rev3")
+            check(md.splitlines()[0] == "変更点：T3 進行中→完了 ／ ボトルネック：変化なし（T4） ／ 影響先：変化なし（T6・T7）",
+                  f"T3 done diff line: {md.splitlines()[0]}")
+            check(d["diff"]["task_changes"] == [{"id": "T3", "kind": "status", "from": "in_progress", "to": "done",
+                                                 "text": "T3 進行中→完了"}], "structured diff task_changes")
+            res, md, d = await call(s, "get_map", {"map_id": mid})
+            items = d["analysis"]["quality"]["items"]
+            check(items[0] == {"text": "原因はDB設計の可能性あり（推定・未確認）", "before": "T4の遅れの原因はDB設計",
+                               "reason": "断定しすぎ"} and items[1]["before"] == "モックで並行開発する",
+                  "quality items keep before/reason")
+
+            res, md, d = await call(s, "render_flow_gif", {"map_id": mid}, "render_flow_gif")
+            gif = Path(d.get("gif_path") or "/nonexistent")
+            check(not res.isError and gif.name == f"{mid}_flow.gif" and gif.exists()
+                  and gif.read_bytes()[:6] in (b"GIF89a", b"GIF87a"), f"flow GIF written ({gif})")
+            check(d.get("frames", 0) > 20 and d.get("events") == 9 and md.startswith("▶ 流れのGIF: "),
+                  f"flow GIF frames={d.get('frames')} events={d.get('events')}")
+            check(d["revision"] == 3, "render_flow_gif does not change revision")
+            res, md, d = await call(s, "render_flow_gif", {"map_id": "nosuchmap"})
+            check(res.isError, "render_flow_gif unknown map -> error")
+            res, md, d = await call(s, "render_team_card", {}, "render_team_card")
+            card = Path(d.get("gif_path") or "/nonexistent")
+            check(not res.isError and card.name == "tamap_team.gif" and card.exists()
+                  and sorted(d["personas"]) == ["map_architect", "pm", "quality_reviewer", "risk_analyst"]
+                  and d["personas"]["quality_reviewer"]["role"] == "赤ペン先生", "team card GIF + personas")
 
             res, md, d = await call(s, "create_map", {"title": broken["title"], "tasks": broken["tasks"],
                                                       "source": "e2e test (broken sample)"}, "create_map（不整合サンプル）")
@@ -137,6 +277,26 @@ async def main():
             check(res.isError, "unknown task in simulate_delay -> error")
             res, md, d = await call(s, "list_maps", {}, "list_maps")
             check(len(d["maps"]) == 3, "list_maps: 3 maps")
+
+    live_checks(mid)
+
+    # Shell fallback (scripts/tamap_cli.sh) calls the same tool functions against the same data dir.
+    cli = str(ROOT / "scripts" / "tamap_cli.sh")
+    p = subprocess.run([cli, "simulate_delay", json.dumps({"map_id": mid, "task_id": "T4"})], cwd="/tmp", env=ENV,
+                       capture_output=True, text=True, timeout=60)
+    check(p.returncode == 0 and p.stdout.startswith("```mermaid") and "what-if: T4" in p.stdout
+          and json.loads(p.stderr)["impacted_ids"] == ["T6", "T7"], "tamap_cli.sh simulate_delay")
+    p = subprocess.run([cli, "get_map"], input=json.dumps({"map_id": "nosuchmap"}), env=ENV,
+                       capture_output=True, text=True, timeout=60)
+    check(p.returncode == 1 and "エラー" in p.stdout, "tamap_cli.sh error -> exit 1")
+    p = subprocess.run([cli, "render_team_card", "{}"], env=ENV, capture_output=True, text=True, timeout=60)
+    check(p.returncode == 0 and p.stdout.startswith("▶ チーム紹介のGIF: ")
+          and Path(json.loads(p.stderr)["gif_path"]).exists(), "tamap_cli.sh render_team_card")
+    p = subprocess.run([cli, "main", "{}"], env=ENV, capture_output=True, text=True, timeout=60)
+    check(p.returncode != 0 and "unknown tool" in p.stderr, "tamap_cli.sh rejects non-tool names")
+    for t in tools:
+        p = subprocess.run([cli, t, "{}"], env=ENV, capture_output=True, text=True, timeout=60)
+        check("unknown tool" not in p.stderr, f"tamap_cli.sh accepts every MCP tool: {t}")
 
     out = ["# TaMap MCP 出力サンプル", "",
            "`tests/e2e_mcp.py` が stdio MCP サーバーを公式 mcp クライアントで実際に呼び、各ツールが返したチャット用テキスト（mermaid）をそのまま貼ったものです（自動生成）。時刻は実行時のもの。",
