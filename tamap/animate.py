@@ -42,6 +42,18 @@ LINK_Y = SPRITE_Y + 7 * SCALE
 NAME_Y = 182
 CAPTION_Y = 240
 TASKS_TOP, TASKS_BOTTOM = 270, 522
+GLOW_PAD = 10
+
+
+def glow_box(key: str, x: int) -> tuple[int, int, int, int]:
+    """Highlight box behind a working bot, sized to the sprite's real pixels (Risk Analyst's magnifier
+    sticks out to the right) and never narrower than the default 124px card. Shared with the live page."""
+    xs = [gx for gx, _, _ in sprites.bot_pixels(key, "working")]
+    left = x - 8 * SCALE + min(xs) * SCALE - GLOW_PAD
+    right = x - 8 * SCALE + (max(xs) + 1) * SCALE + GLOW_PAD
+    return min(left, x - 62), SPRITE_Y - 8 - SCALE, max(right, x + 62), SPRITE_Y + 14 * SCALE + 6
+
+
 FONT_CANDIDATES = [
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
@@ -241,7 +253,7 @@ class FlowRenderer:
             bob = -SCALE if st == "working" and phase else 0
             sx, sy = x - 8 * SCALE, SPRITE_Y + bob
             if st == "working":
-                d.rounded_rectangle((x - 62, SPRITE_Y - 8, x + 62, SPRITE_Y + 14 * SCALE + 6), radius=14,
+                d.rounded_rectangle(glow_box(key, x), radius=14,
                                     fill=(191, 219, 254), outline=(96, 165, 250), width=2)
             sprites.draw_bot(d, key, sx, sy, st, SCALE, blink=blink)
             if st == "working":

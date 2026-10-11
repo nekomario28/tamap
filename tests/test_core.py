@@ -200,6 +200,25 @@ class StoreTest(unittest.TestCase):
         self.assertTrue(panels)
         self.assertTrue(all(not mt["taskmap"] for mt in panels))
 
+    def test_glow_box_contains_sprite(self):
+        from tamap import animate, live, sprites
+        spec = live.scene_spec()
+        for key, _, x in animate.NODES[1:]:
+            x0, y0, x1, y1 = animate.glow_box(key, x)
+            sx = x - 8 * animate.SCALE
+            for blink in (False, True):
+                for gx, gy, _ in sprites.bot_pixels(key, "working", blink):
+                    for bob in (0, -animate.SCALE):  # working bots bob up by one pixel step
+                        sy = animate.SPRITE_Y + bob
+                        self.assertGreaterEqual(sx + gx * animate.SCALE, x0, key)
+                        self.assertLessEqual(sx + (gx + 1) * animate.SCALE, x1, key)
+                        self.assertGreaterEqual(sy + gy * animate.SCALE, y0, key)
+                        self.assertLessEqual(sy + (gy + 1) * animate.SCALE, y1, key)
+            self.assertEqual(spec["glow"][key], [x0 - x, y0, x1 - x, y1])  # live page draws the same box
+        rx0, _, rx1, _ = animate.glow_box("risk_analyst", 640)
+        qx0, _, _, _ = animate.glow_box("quality_reviewer", 825)
+        self.assertLess(rx1, qx0)  # widened box still clear of the neighbour
+
     def test_history_trim_keeps_whole_cycles(self):
         cyc = [{"bot": "pm", "status": "working"}, {"bot": "map_architect", "status": "working"},
                {"bot": "map_architect", "status": "done"}, {"bot": "pm", "status": "done"}]

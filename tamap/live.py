@@ -72,7 +72,7 @@ def scene_spec() -> dict:
         "bot_fill": {k: _hex(v) for k, v in a.BOT_FILL.items()},
         "task_fill": {k: _hex(v) for k, v in a.TASK_FILL.items()},
         "status_ja": a.BOT_STATUS_JA, "task_status_ja": core.STATUS_LABELS_JA,
-        "sprites": spr, "sparkle": [list(p) for p in sprites.SPARKLE], "envelope": sprites.ENVELOPE,
+        "sprites": spr, "glow": {k: list(a.glow_box(k, 0)) for k in persona.PERSONAS}, "sparkle": [list(p) for p in sprites.SPARKLE], "envelope": sprites.ENVELOPE,
         "personas": {k: {"name": p["name"], "emoji": p["emoji"], "role": p["role"], "color": _hex(p["color"]),
                          "lines": p["lines"]} for k, p in persona.PERSONAS.items()},
     }
@@ -346,7 +346,7 @@ function draw(now) {
     if (k === "user") { pixelBox(x - 46, y - 24, x + 46, y + 24, "#ffffff", C.muted); text(label, x, y, 16, C.ink); continue; }
     const st = snap.bots[k].status, p = S.personas[k];
     const bob = st === "working" && phase ? -sc : 0;
-    if (st === "working") roundRect(x - 62, S.sprite_y - 8, x + 62, S.sprite_y + 14 * sc + 6, 14, "#bfdbfe", "#60a5fa", 2);
+    if (st === "working") { const g = S.glow[k]; roundRect(x + g[0], g[1], x + g[2], g[3], 14, "#bfdbfe", "#60a5fa", 2); }
     cells(st === "working" && blink ? S.sprites[k].working_blink : S.sprites[k][st], x - 8 * sc, S.sprite_y + bob, sc);
     if (st === "working") cells(S.sparkle.map(([gx, gy]) => [gx, gy, C.sparkle]), phase ? x + 46 : x - 60, S.sprite_y + (phase ? 4 : 26), 3);
     else if (st === "idle") text(phase ? "zZ" : "z", x - 40, S.sprite_y + 6, 15, C.muted, "left");
