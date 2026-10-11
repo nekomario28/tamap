@@ -113,6 +113,22 @@ class StoreTest(unittest.TestCase):
             self.assertEqual(img.format, "GIF")
             self.assertEqual(img.n_frames, r["frames"])
             self.assertGreater(img.n_frames, 20)
+        card = animate.render_team_card(Path(self.tmp.name) / "out")
+        with Image.open(card["path"]) as img:
+            self.assertEqual((img.format, img.n_frames), ("GIF", card["frames"]))
+
+    def test_persona_say_and_status_chart(self):
+        from tamap import persona, render
+        mid = self.m["map_id"]
+        m = store.set_bot_status(mid, "risk_analyst", "working", "T4を分析", say="T4、あやしいかも…" + "x" * 40)
+        self.assertEqual(m["bots"]["risk_analyst"]["say"], ("T4、あやしいかも…" + "x" * 40)[:store.SAY_LIMIT])
+        self.assertEqual(m["bot_history"][-1]["say"], m["bots"]["risk_analyst"]["say"])
+        self.assertEqual(persona.line("quality_reviewer", "done", quality_count=2), "2件直したよ！")
+        self.assertEqual(persona.line("map_architect", "working"), "線、つなぐっす。")
+        self.assertEqual(set(persona.PERSONAS), set(store.BOT_KEYS))
+        md = render.render_status(m)
+        self.assertIn('"⚠️ Risk Analyst<br>(•ω•)✧ 作業中<br>「T4、あやしいかも…', md)
+        self.assertIn('"📋 TaMap PM<br>(-ω-)zz 待機', md)
 
 
 if __name__ == "__main__":

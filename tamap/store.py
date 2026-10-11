@@ -287,17 +287,19 @@ BOT_STATUSES = ("idle", "working", "done", "error")
 BOT_ALIASES = {"tamap_pm": "pm", "main": "pm", "architect": "map_architect", "risk": "risk_analyst",
                "quality": "quality_reviewer", "reviewer": "quality_reviewer"}
 BOT_HISTORY_LIMIT = 30
+SAY_LIMIT = 30
 
 
 BOT_NAMES = {"pm": "TaMap PM", "map_architect": "Map Architect", "risk_analyst": "Risk Analyst",
              "quality_reviewer": "Quality Reviewer"}
 
 
-def set_bot_status(map_id: str, bot: str, status: str, note: str | None = None) -> dict:
+def set_bot_status(map_id: str, bot: str, status: str, note: str | None = None, say: str | None = None) -> dict:
     """Record a bot's activity state on a map. Does not bump the map revision (operational data).
 
     Only one bot lights up at a time: when a specialist becomes `working`, a working PM is put back
     to `idle` (note「<Bot>の結果待ち」) and that is recorded in bot_history too.
+    `say` is an optional in-character one-liner shown in the flow GIF speech bubble (note stays factual).
     """
     key = (bot or "").strip().lower().replace(" ", "_").replace("-", "_")
     key = BOT_ALIASES.get(key, key)
@@ -307,6 +309,7 @@ def set_bot_status(map_id: str, bot: str, status: str, note: str | None = None) 
     if st not in BOT_STATUSES:
         raise StoreError(f"status は {' / '.join(BOT_STATUSES)} のいずれかです（{status!r}）。")
     note = (note or "").strip()[:200] or None
+    say = (say or "").strip()[:SAY_LIMIT] or None
     with _lock():
         map_ = read_map(map_id)
         ts = now_iso()
@@ -316,8 +319,8 @@ def set_bot_status(map_id: str, bot: str, status: str, note: str | None = None) 
             wait = f"{BOT_NAMES[key]}の結果待ち"
             bots["pm"] = {"status": "idle", "note": wait, "updated_at": ts}
             hist.append({"at": ts, "bot": "pm", "status": "idle", "note": wait, "auto": True})
-        bots[key] = {"status": st, "note": note, "updated_at": ts}
-        hist.append({"at": ts, "bot": key, "status": st, "note": note})
+        bots[key] = {"status": st, "note": note, "updated_at": ts, **({"say": say} if say else {})}
+        hist.append({"at": ts, "bot": key, "status": st, "note": note, **({"say": say} if say else {})})
         map_["bot_history"] = hist[-BOT_HISTORY_LIMIT:]
         _write(map_)
     return map_

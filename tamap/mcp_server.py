@@ -11,7 +11,7 @@ from __future__ import annotations
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent
 
-from . import animate, core, render, store
+from . import animate, core, persona, render, store
 
 mcp = FastMCP(
     "tamap",
@@ -22,7 +22,8 @@ mcp = FastMCP(
         "set_bot_status records pm/map_architect/risk_analyst/quality_reviewer as idle/working/done/error "
         "(a specialist going working puts the PM back to idle automatically); record it at each hand-off but do "
         "not post the flowchart except on errors or when the user asks (get_status). render_flow_gif replays the "
-        "last cycle as out/<map_id>_flow.gif to attach to the result message. "
+        "last cycle as out/<map_id>_flow.gif to attach to the result message; the bots appear as pixel characters and "
+        "set_bot_status(say=...) is their speech bubble. render_team_card makes out/tamap_team.gif for the greeting. "
         "Task status: done/in_progress/todo/blocked. Validation (duplicate ids, unknown references, cycles) is "
         "computed by deterministic code; do not override it in prose. Optional analysis = {pm:{summary, actions"
         "(max 3)}, map_architect:{summary}, risk:{summary, items}, quality:{summary, items:[{before, text, "
@@ -126,16 +127,18 @@ def list_maps() -> CallToolResult:
 
 
 @mcp.tool()
-def set_bot_status(map_id: str, bot: str, status: str, note: str | None = None) -> CallToolResult:
+def set_bot_status(map_id: str, bot: str, status: str, note: str | None = None,
+                   say: str | None = None) -> CallToolResult:
     """Record a bot's state on a map and return the bot-activity flowchart (mermaid).
 
     bot: pm | map_architect | risk_analyst | quality_reviewer
-    status: idle | working | done | error     note: short free text (optional)
+    status: idle | working | done | error     note: short factual text (optional)
+    say: optional in-character one-liner (<=30 chars) for the flow GIF speech bubble
     When a non-pm bot becomes working, pm is set to idle (note「<Bot>の結果待ち」) automatically.
     Does not change the map revision. Post the flowchart only on errors (the result uses the flow GIF).
     """
     try:
-        m = store.set_bot_status(map_id, bot, status, note)
+        m = store.set_bot_status(map_id, bot, status, note, say)
         return _ok(render.render_status(m), map_id=map_id, bots=m["bots"], bot_history=m["bot_history"][-5:])
     except Exception as e:  # noqa: BLE001
         return _fail(e)
@@ -166,6 +169,22 @@ def render_flow_gif(map_id: str) -> CallToolResult:
             text += " ※日本語フォントが見つからず、文字が化けている可能性があります（TAMAP_FONT で指定可）"
         return _ok(text, map_id=map_id, revision=m["revision"], gif_path=r["path"], frames=r["frames"],
                    duration_ms=r["duration_ms"], events=r["events"], font=r["font"])
+    except Exception as e:  # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def render_team_card() -> CallToolResult:
+    """Render the team introduction GIF (out/tamap_team.gif): the 4 bots as pixel characters with role and
+    catchphrase. Attach it to the PM's first greeting. Text result = one line with the file path."""
+    try:
+        r = animate.render_team_card()
+        text = f"▶ チーム紹介のGIF: `{r['path']}`"
+        if r["font_fallback"]:
+            text += " ※日本語フォントが見つからず、文字が化けている可能性があります（TAMAP_FONT で指定可）"
+        personas = {k: {f: p[f] for f in ("name", "emoji", "role", "motif", "trait", "lines")}
+                    for k, p in persona.PERSONAS.items()}
+        return _ok(text, gif_path=r["path"], frames=r["frames"], font=r["font"], personas=personas)
     except Exception as e:  # noqa: BLE001
         return _fail(e)
 

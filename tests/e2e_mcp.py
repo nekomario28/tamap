@@ -47,8 +47,8 @@ async def main():
         async with ClientSession(r, w) as s:
             await s.initialize()
             tools = sorted(t.name for t in (await s.list_tools()).tools)
-            check(tools == ["create_map", "get_map", "get_status", "list_maps", "render_flow_gif", "set_bot_status",
-                            "simulate_delay", "update_map"], f"tools: {tools}")
+            check(tools == ["create_map", "get_map", "get_status", "list_maps", "render_flow_gif", "render_team_card",
+                            "set_bot_status", "simulate_delay", "update_map"], f"tools: {tools}")
 
             analysis = {
                 "pm": {"summary": "T6がT4系列とT5系列の合流点。T3→T4→T6→T7が最長の未完了チェーン。",
@@ -102,7 +102,10 @@ async def main():
             res, md, d = await call(s, "set_bot_status", {"map_id": mid, "bot": "pm", "status": "working",
                                                           "note": "依頼を受付"})
             res, md, d = await call(s, "set_bot_status", {"map_id": mid, "bot": "map_architect", "status": "working",
-                                                          "note": "T1〜T7を構造化中"}, "set_bot_status（MA作業中 → PMは自動で待機）")
+                                                          "note": "T1〜T7を構造化中", "say": "線、7本つなぐっす。"},
+                                    "set_bot_status（MA作業中 → PMは自動で待機）")
+            check('"🗺️ Map Architect<br>(•ω•)✧ 作業中<br>「線、7本つなぐっす。」' in md
+                  and d["bot_history"][-1].get("say") == "線、7本つなぐっす。", "character face + say in status chart")
             check(d["bots"]["pm"]["status"] == "idle" and d["bots"]["pm"]["note"] == "Map Architectの結果待ち",
                   "specialist working -> pm idle (結果待ち) automatically")
             check("class PM,RA,QR idle" in md and "class MA working" in md, "only MA lit in flowchart")
@@ -165,6 +168,11 @@ async def main():
             check(d["revision"] == 3, "render_flow_gif does not change revision")
             res, md, d = await call(s, "render_flow_gif", {"map_id": "nosuchmap"})
             check(res.isError, "render_flow_gif unknown map -> error")
+            res, md, d = await call(s, "render_team_card", {}, "render_team_card")
+            card = Path(d.get("gif_path") or "/nonexistent")
+            check(not res.isError and card.name == "tamap_team.gif" and card.exists()
+                  and sorted(d["personas"]) == ["map_architect", "pm", "quality_reviewer", "risk_analyst"]
+                  and d["personas"]["quality_reviewer"]["role"] == "赤ペン先生", "team card GIF + personas")
 
             res, md, d = await call(s, "create_map", {"title": broken["title"], "tasks": broken["tasks"],
                                                       "source": "e2e test (broken sample)"}, "create_map（不整合サンプル）")

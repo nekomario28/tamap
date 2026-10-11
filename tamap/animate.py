@@ -1,9 +1,12 @@
 """Flow GIF: replay one PM → Map Architect → Risk Analyst → Quality Reviewer → PM cycle from bot_history.
 
-render_flow_gif(map) writes out/<map_id>_flow.gif (TAMAP_OUT_DIR to override). Only the bot that is
-working is lit; requests (blue envelope) and results (yellow envelope) travel between PM and the
-specialist; the last frames spread the delay impact from the bottleneck over the task map and show
-the PM's 3 actions plus the Quality Reviewer badge (count = analysis.quality.items).
+render_flow_gif(map) writes out/<map_id>_flow.gif (TAMAP_OUT_DIR to override). The bots are retro
+pixel characters (sprites.py / persona.py): only the working bot is lit and bobs, idle bots are faded
+and doze, each status change gets a speech bubble in the bot's own voice (`say` or the persona line).
+Requests (blue envelope) and results (yellow envelope) travel between PM and the specialist; the last
+frames spread the delay impact from the bottleneck over the task map and show the PM's 3 actions plus
+the Quality Reviewer badge (count = analysis.quality.items).
+render_team_card() writes out/tamap_team.gif, a team introduction for the PM's greeting.
 """
 from __future__ import annotations
 
@@ -14,7 +17,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from . import core, store
+from . import core, persona, sprites, store
 from .render import hms
 
 OUT_DIR = Path(os.environ.get("TAMAP_OUT_DIR", store.ROOT / "out"))
@@ -32,7 +35,12 @@ BOT_STATUS_JA = {"idle": "待機", "working": "作業中", "done": "完了", "er
 NODES = [("user", "ユーザー", 80), ("pm", "TaMap PM", 250), ("map_architect", "Map Architect", 455),
          ("risk_analyst", "Risk Analyst", 640), ("quality_reviewer", "Quality Reviewer", 825)]
 NODE_X = {k: x for k, _, x in NODES}
-BOT_Y = 130
+SCALE = 6
+BUBBLE_Y = 56
+SPRITE_Y = 82
+LINK_Y = SPRITE_Y + 7 * SCALE
+NAME_Y = 182
+CAPTION_Y = 240
 FONT_CANDIDATES = [
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
@@ -76,12 +84,31 @@ class Fonts:
         return self._cache[size]
 
 
+GLYPH_FIX = str.maketrans({"〜": "～"})  # WAVE DASH is missing from some CJK fonts (renders as tofu)
+
+
 def _fit(draw: ImageDraw.ImageDraw, text: str, font, width: int) -> str:
+    text = text.translate(GLYPH_FIX)
     if draw.textlength(text, font=font) <= width:
         return text
     while text and draw.textlength(text + "…", font=font) > width:
         text = text[:-1]
     return text + "…"
+
+
+def _wrap(draw, text: str, font, width: int, max_lines: int) -> list[str]:
+    text = text.translate(GLYPH_FIX)
+    lines, cur = [], ""
+    for ch in text:
+        if draw.textlength(cur + ch, font=font) > width:
+            lines.append(cur)
+            cur = ch
+        else:
+            cur += ch
+    lines.append(cur)
+    if len(lines) > max_lines:
+        lines = lines[:max_lines - 1] + [_fit(draw, "".join(lines[max_lines - 1:]), font, width)]
+    return lines
 
 
 def _center(draw, xy, text, font, fill):
@@ -150,7 +177,7 @@ class FlowRenderer:
         for tid in self.tasks:
             cols.setdefault(depth[tid], []).append(tid)
         ncol = max(len(cols), 1)
-        top, bottom, left, right = 250, 500, 30, W - 30
+        top, bottom, left, right = 270, 522, 30, W - 30
         cw = (right - left) / ncol
         self.box_w = int(min(150, cw - 24))
         rows = max((len(v) for v in cols.values()), default=1)
@@ -169,47 +196,63 @@ class FlowRenderer:
         img = Image.new("RGB", (W, H), BG)
         d = ImageDraw.Draw(img)
         head = f"TaMap ・ {self.m['title']}"
-        d.text((24, 16), _fit(d, head, self.font(20), 640), font=self.font(20), fill=INK)
-        d.text((W - 24, 18), f"map_id {self.m['map_id']} ・ rev {self.m['revision']}", font=self.font(15),
+        d.text((24, 14), _fit(d, head, self.font(20), 640), font=self.font(20), fill=INK)
+        d.text((W - 24, 16), f"map_id {self.m['map_id']} ・ rev {self.m['revision']}", font=self.font(15),
                fill=MUTED, anchor="ra")
-        d.rounded_rectangle((24, 196, W - 24, 236), radius=8, fill=(255, 255, 255), outline=(203, 213, 225))
-        d.text((40, 216), _fit(d, caption, self.font(18), W - 300), font=self.font(18), fill=INK, anchor="lm")
+        _pixel_box(d, (24, CAPTION_Y - 18, W - 24, CAPTION_Y + 18), (255, 255, 255), (148, 163, 184))
+        d.text((40, CAPTION_Y), _fit(d, caption, self.font(18), W - 300), font=self.font(18), fill=INK, anchor="lm")
         if sub:
-            d.text((W - 40, 216), sub, font=self.font(14), fill=MUTED, anchor="rm")
+            d.text((W - 40, CAPTION_Y), sub, font=self.font(14), fill=MUTED, anchor="rm")
         return img, d
 
-    def bots(self, d, state: dict[str, dict], badge: bool):
-        y = BOT_Y
-        for (a, _, xa), (b, _, xb) in zip(NODES, NODES[1:]):
-            d.line((xa + 70, y, xb - 70, y), fill=(203, 213, 225), width=3)
+    def bots(self, d, state: dict[str, dict], badge: bool, speaker: tuple[str, str] | None, phase: int,
+             blink: bool):
+        y = LINK_Y
+        for (_, _, xa), (_, _, xb) in zip(NODES, NODES[1:]):
+            for x in range(xa + 50, xb - 50, 12):
+                d.rectangle((x, y - 2, x + 5, y + 2), fill=(203, 213, 225))
         for key, label, x in NODES:
             if key == "user":
-                d.ellipse((x - 48, y - 30, x + 48, y + 30), fill=(255, 255, 255), outline=MUTED, width=2)
+                _pixel_box(d, (x - 46, y - 24, x + 46, y + 24), (255, 255, 255), MUTED)
                 _center(d, (x, y), label, self.font(16), INK)
                 continue
             st = state.get(key, {}).get("status", "idle")
-            fill = BOT_FILL[st]
+            p = persona.PERSONAS[key]
+            bob = -SCALE if st == "working" and phase else 0
+            sx, sy = x - 8 * SCALE, SPRITE_Y + bob
             if st == "working":
-                d.rounded_rectangle((x - 82, y - 46, x + 82, y + 46), radius=18, fill=(191, 219, 254))
-            d.rounded_rectangle((x - 72, y - 36, x + 72, y + 36), radius=12, fill=fill,
-                                outline=(30, 64, 175) if st == "working" else (75, 85, 99),
-                                width=4 if st == "working" else 1)
-            txt = (255, 255, 255) if st != "idle" else INK
-            _center(d, (x, y - 12), label, self.font(16), txt)
-            _center(d, (x, y + 12), BOT_STATUS_JA[st], self.font(15), txt)
-            if key == "quality_reviewer" and badge and self.qr_count:
-                bt = f"指摘{self.qr_count}件 → PMが修正"
-                bw = d.textlength(bt, font=self.font(13)) + 16
-                d.rounded_rectangle((x - bw / 2, y - 74, x + bw / 2, y - 50), radius=10, fill=(254, 243, 199),
-                                    outline=(217, 119, 6))
-                _center(d, (x, y - 62), bt, self.font(13), (120, 53, 15))
+                d.rounded_rectangle((x - 62, SPRITE_Y - 8, x + 62, SPRITE_Y + 14 * SCALE + 6), radius=14,
+                                    fill=(191, 219, 254), outline=(96, 165, 250), width=2)
+            sprites.draw_bot(d, key, sx, sy, st, SCALE, blink=blink)
+            if st == "working":
+                sprites.draw_sparkle(d, x + 46 if phase else x - 60, SPRITE_Y + (4 if phase else 26), 3)
+            elif st == "idle":
+                d.text((x - 44, SPRITE_Y - 2), "zZ" if phase else "z", font=self.font(15), fill=MUTED)
+            _center(d, (x, NAME_Y), label, self.font(16), INK)
+            pill = f"{p['role']}・{BOT_STATUS_JA[st]}"
+            pw = d.textlength(pill, font=self.font(13)) + 18
+            d.rectangle((x - pw / 2, NAME_Y + 12, x + pw / 2, NAME_Y + 32), fill=BOT_FILL[st])
+            _center(d, (x, NAME_Y + 22), pill, self.font(13), INK if st == "idle" else (255, 255, 255))
+            if speaker and speaker[0] == key:
+                self.bubble(d, x, speaker[1], p["color"])
+            elif key == "quality_reviewer" and badge and self.qr_count:
+                self.bubble(d, x, f"指摘{self.qr_count}件 → PMが修正", (217, 119, 6), fill=(254, 243, 199))
+
+    def bubble(self, d, x: int, text: str, edge, fill=(255, 255, 255)):
+        f = self.font(14)
+        text = _fit(d, text, f, 250)
+        bw = d.textlength(text, font=f) + 22
+        x0 = min(max(x - bw / 2, 8), W - 8 - bw)
+        _pixel_box(d, (x0, BUBBLE_Y - 14, x0 + bw, BUBBLE_Y + 14), fill, edge)
+        for k in range(3):  # stepped pixel tail pointing at the speaker
+            d.rectangle((x - 6 + k * 2, BUBBLE_Y + 14 + k * 3, x + 6 - k * 2, BUBBLE_Y + 17 + k * 3), fill=edge)
+        d.text((x0 + bw / 2, BUBBLE_Y), text, font=f, fill=INK, anchor="mm")
 
     def envelope(self, d, a: str, b: str, t: float, color):
         xa, xb = NODE_X[a], NODE_X[b]
         x = xa + (xb - xa) * t
-        y = BOT_Y - 58 - 30 * (4 * t * (1 - t))
-        d.rectangle((x - 16, y - 11, x + 16, y + 11), fill=color, outline=INK, width=1)
-        d.line((x - 16, y - 11, x, y + 2, x + 16, y - 11), fill=INK, width=1)
+        y = LINK_Y - 6 - 44 * (4 * t * (1 - t))
+        sprites.draw_envelope(d, x, y, color)
 
     def taskmap(self, d, impact_upto: int | None = None):
         for t in self.tasks.values():
@@ -244,8 +287,8 @@ class FlowRenderer:
             return
         f = self.font(16)
         h = 44 + 28 * len(self.actions)
-        x0, y0 = 300, H - 24 - h
-        d.rounded_rectangle((x0, y0, W - 24, H - 24), radius=10, fill=(255, 255, 255), outline=(37, 99, 235), width=2)
+        x0, y0 = 300, H - 18 - h
+        _pixel_box(d, (x0, y0, W - 24, H - 18), (255, 255, 255), (37, 99, 235))
         d.text((x0 + 16, y0 + 12), "次の3アクション", font=self.font(17), fill=(30, 64, 175))
         for i, a in enumerate(self.actions):
             d.text((x0 + 16, y0 + 40 + 28 * i), _fit(d, f"{i + 1}. {a}", f, W - x0 - 64), font=f, fill=INK)
@@ -255,10 +298,12 @@ class FlowRenderer:
     def frames(self, events: list[dict]) -> tuple[list[Image.Image], list[int]]:
         imgs: list[Image.Image] = []
         durs: list[int] = []
+        state: dict[str, dict] = {}
+        flags = {"badge": False}
 
-        def frame(caption, sub, state, env=None, badge=False, impact=None, panel=False, ms=100):
+        def frame(caption, sub, speaker=None, env=None, impact=None, panel=False, ms=100, phase=0, blink=False):
             img, d = self.base(caption, sub)
-            self.bots(d, state, badge)
+            self.bots(d, state, flags["badge"], speaker, phase, blink)
             if env:
                 self.envelope(d, *env)
             self.taskmap(d, impact)
@@ -267,9 +312,12 @@ class FlowRenderer:
             imgs.append(img)
             durs.append(ms)
 
-        state: dict[str, dict] = {}
-        badge = False
-        frame("PMに話しかけると、3体の専門Botが順に分析します", "", state, ms=1200)
+        def hold(caption, sub, speaker=None, impact=None, panel=False, ms=1100):
+            frame(caption, sub, speaker, None, impact, panel, int(ms * 0.45), 0)
+            frame(caption, sub, speaker, None, impact, panel, int(ms * 0.4), 1)
+            frame(caption, sub, speaker, None, impact, panel, ms - int(ms * 0.45) - int(ms * 0.4), 0, True)
+
+        hold("PMに話しかけると、3体の専門Botが順に分析します", "", ("pm", "TaMap チーム、出動します！"), ms=1400)
         for i, ev in enumerate(events):
             bot, st = ev["bot"], ev["status"]
             if bot != "pm" and st == "working":
@@ -278,6 +326,7 @@ class FlowRenderer:
             note = f"：{ev['note']}" if ev.get("note") else ""
             caption = f"{name} {BOT_STATUS_JA[st]}{note}"
             sub = f"{hms(ev.get('at'))} JST ・ {i + 1}/{len(events)}"
+            speaker = (bot, persona.line(bot, st, ev.get("say"), self.qr_count))
             env = None
             if bot == "pm" and st == "working" and i == 0:
                 env = ("user", "pm", REQUEST)
@@ -287,22 +336,41 @@ class FlowRenderer:
                 env = (bot, "pm", RESULT if st == "done" else ERR)
             if env:
                 for k in range(1, 9):
-                    frame(caption, sub, state, (env[0], env[1], k / 9, env[2]), badge)
+                    frame(caption, sub, None, (env[0], env[1], k / 9, env[2]))
             state[bot] = {"status": st}
+            hold(caption, sub, speaker)
             if bot == "quality_reviewer" and st == "done":
-                badge = True
-            frame(caption, sub, state, None, badge, ms=1100)
+                flags["badge"] = True
         if self.bottlenecks:
             names = "・".join(self.bottlenecks)
-            frame(f"ボトルネック {names}", "TaMap Core の計算", state, None, badge, impact=0, ms=1200)
+            ra = ("risk_analyst", f"{names}、あやしいかも…")
+            hold(f"ボトルネック {names}", "TaMap Core の計算", ra, impact=0, ms=1200)
             for k in range(1, max(self.impact_dist.values(), default=0) + 1):
                 ids = "・".join(t for t, dd in self.impact_dist.items() if dd <= k)
-                frame(f"{names} が遅れると {ids} に影響（{k}段先まで）", "TaMap Core の計算", state, None, badge,
-                      impact=k, ms=1100)
+                hold(f"{names} が遅れると {ids} に影響（{k}段先まで）", "TaMap Core の計算", ra, impact=k)
         final = max(self.impact_dist.values(), default=0) if self.bottlenecks else None
-        frame("結果：次の3アクション" if self.actions else "結果", "", state, None, badge, impact=final,
-              panel=True, ms=3500)
+        hold("結果：次の3アクション" if self.actions else "結果", "", ("pm", persona.line("pm", "done")),
+             impact=final, panel=True, ms=3500)
         return imgs, durs
+
+
+def _pixel_box(d, box, fill, edge, step: int = 4):
+    """Retro box: square corners notched by one pixel step, 2px border."""
+    x0, y0, x1, y1 = box
+    d.rectangle((x0 + step, y0, x1 - step, y1), fill=edge)
+    d.rectangle((x0, y0 + step, x1, y1 - step), fill=edge)
+    d.rectangle((x0 + step, y0 + 2, x1 - step, y1 - 2), fill=fill)
+    d.rectangle((x0 + 2, y0 + step, x1 - 2, y1 - step), fill=fill)
+
+
+def _save_gif(imgs: list[Image.Image], durs: list[int], path: Path) -> int:
+    """Write the GIF; returns the stored frame count (Pillow merges identical consecutive frames)."""
+    tmp = path.with_suffix(f".tmp-{os.getpid()}.gif")
+    imgs[0].save(tmp, save_all=True, append_images=imgs[1:], duration=durs, loop=0, optimize=True)
+    with Image.open(tmp) as g:
+        n = g.n_frames
+    os.replace(tmp, path)
+    return n
 
 
 def render_flow_gif(m: dict, out_dir: Path | None = None) -> dict:
@@ -312,8 +380,42 @@ def render_flow_gif(m: dict, out_dir: Path | None = None) -> dict:
     r = FlowRenderer(m)
     imgs, durs = r.frames(events)
     path = out_dir / f"{m['map_id']}_flow.gif"
-    tmp = path.with_suffix(f".tmp-{os.getpid()}.gif")
-    imgs[0].save(tmp, save_all=True, append_images=imgs[1:], duration=durs, loop=0, optimize=True)
-    os.replace(tmp, path)
-    return {"path": str(path), "frames": len(imgs), "duration_ms": sum(durs), "events": len(events),
+    frames = _save_gif(imgs, durs, path)
+    return {"path": str(path), "frames": frames, "duration_ms": sum(durs), "events": len(events),
             "font": r.font.path, "font_fallback": r.font.path is None}
+
+
+def render_team_card(out_dir: Path | None = None) -> dict:
+    """Team introduction GIF (out/tamap_team.gif): the 4 bots bobbing, each with role, motif and catchphrase."""
+    out_dir = Path(out_dir or OUT_DIR)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    font = Fonts()
+    w, h, scale = 960, 400, 7
+    keys = ["pm", "map_architect", "risk_analyst", "quality_reviewer"]
+    imgs, durs = [], []
+    for phase, blink, ms in ((0, False, 420), (1, False, 420), (0, False, 420), (1, False, 300), (0, True, 140)):
+        img = Image.new("RGB", (w, h), BG)
+        d = ImageDraw.Draw(img)
+        d.text((w / 2, 30), "TaMap チーム", font=font(26), fill=INK, anchor="mm")
+        d.text((w / 2, 62), "話しかけるのは PM だけ。3体の専門Botが順番に手伝います", font=font(15), fill=MUTED,
+               anchor="mm")
+        for i, key in enumerate(keys):
+            p = persona.PERSONAS[key]
+            cx = int(w / 8 + i * w / 4)
+            bob = -scale if (phase + i) % 2 else 0
+            _pixel_box(d, (cx - 110, 96, cx + 110, 384), (255, 255, 255), p["color"])
+            sprites.draw_bot(d, key, cx - 8 * scale, 112 + bob, "working", scale, blink=blink)
+            d.text((cx, 228), p["name"], font=font(18), fill=INK, anchor="mm")
+            d.text((cx, 252), p["role"], font=font(15), fill=p["color"], anchor="mm")
+            d.text((cx, 278), _fit(d, p["motif"], font(12), 200), font=font(12), fill=MUTED, anchor="mm")
+            say = f"「{p['lines']['working']}」"
+            _pixel_box(d, (cx - 100, 300, cx + 100, 336), (248, 250, 252), (203, 213, 225))
+            d.text((cx, 318), _fit(d, say, font(14), 190), font=font(14), fill=INK, anchor="mm")
+            for k, ln in enumerate(_wrap(d, p["trait"], font(12), 200, 2)):
+                d.text((cx, 354 + 16 * k), ln, font=font(12), fill=MUTED, anchor="mm")
+        imgs.append(img)
+        durs.append(ms)
+    path = out_dir / "tamap_team.gif"
+    frames = _save_gif(imgs, durs, path)
+    return {"path": str(path), "frames": frames, "duration_ms": sum(durs), "font": font.path,
+            "font_fallback": font.path is None}

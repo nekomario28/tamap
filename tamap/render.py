@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from . import core
+from . import core, persona
 
 JST = timezone(timedelta(hours=9))
 ERROR_LABELS = {
@@ -201,7 +201,10 @@ def render_status(m: dict, history_limit: int = 5) -> str:
     lines = ["```mermaid", "flowchart LR", '  U(["ユーザー"])']
     for key, label in BOTS:
         b = bots.get(key) or {"status": "idle"}
-        parts = [label, BOT_STATUS_JA[b["status"]]]
+        p = persona.PERSONAS[key]
+        parts = [f"{p['emoji']} {label}", f"{mm_text(persona.FACES[b['status']])} {BOT_STATUS_JA[b['status']]}"]
+        if b["status"] in ("working", "error"):
+            parts.append(f"「{mm_text(persona.line(key, b['status'], b.get('say')))}」")
         if b.get("note"):
             parts.append(mm_text(_short(b["note"], 36)))
         if b.get("updated_at"):
