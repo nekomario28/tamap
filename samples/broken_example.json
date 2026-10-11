@@ -1,0 +1,14 @@
+{
+  "title": "デモ用：不整合入りサンプル（Quality Reviewer検出デモ）",
+  "_note": "わざと不整合を入れています: T5 が存在しない T9 を参照 / T6 と T7 が循環 (T6→T7→T6) / T2 が重複ID",
+  "tasks": [
+    {"id": "T1", "title": "要件整理", "status": "done", "depends_on": []},
+    {"id": "T2", "title": "UI設計", "status": "done", "depends_on": ["T1"]},
+    {"id": "T2", "title": "UI設計（重複）", "status": "todo", "depends_on": ["T1"]},
+    {"id": "T3", "title": "DB設計", "status": "in_progress", "depends_on": ["T1"]},
+    {"id": "T4", "title": "API実装", "status": "todo", "depends_on": ["T3"]},
+    {"id": "T5", "title": "画面実装", "status": "in_progress", "depends_on": ["T2", "T9"]},
+    {"id": "T6", "title": "統合テスト", "status": "todo", "depends_on": ["T4", "T5", "T7"]},
+    {"id": "T7", "title": "リリース", "status": "todo", "depends_on": ["T6"]}
+  ]
+}

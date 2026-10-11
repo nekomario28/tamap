@@ -1,0 +1,12 @@
+{
+  "title": "タスク管理アプリ開発（README入力例）",
+  "tasks": [
+    {"id": "T1", "title": "要件整理", "status": "done", "depends_on": []},
+    {"id": "T2", "title": "UI設計", "status": "done", "depends_on": ["T1"]},
+    {"id": "T3", "title": "DB設計", "status": "in_progress", "depends_on": ["T1"]},
+    {"id": "T4", "title": "API実装", "status": "todo", "depends_on": ["T3"]},
+    {"id": "T5", "title": "画面実装", "status": "in_progress", "depends_on": ["T2"]},
+    {"id": "T6", "title": "統合テスト", "status": "todo", "depends_on": ["T4", "T5"]},
+    {"id": "T7", "title": "リリース", "status": "todo", "depends_on": ["T6"]}
+  ]
+}
