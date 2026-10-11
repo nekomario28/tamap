@@ -1,9 +1,47 @@
 import json
+import multiprocessing as mp
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 from tamap import core, store
+
+
+def _conc_status_worker(data_dir: str, map_id: str, i: int) -> None:
+    """One process in the store stress test. Sleeps inside the locked write to widen the race."""
+    from tamap import store as st
+    st.DATA_DIR = Path(data_dir)
+    orig = st._write
+
+    def slow(map_):
+        time.sleep(0.02)
+        orig(map_)
+
+    st._write = slow
+    bot = "pm" if i % 2 == 0 else "map_architect"
+    st.set_bot_status(map_id, bot, "done" if i % 3 == 0 else "working", note=f"n{i}")
+
+
+def _conc_update_worker(data_dir: str, map_id: str, title: str) -> None:
+    from tamap import store as st
+    st.DATA_DIR = Path(data_dir)
+    orig = st.read_map
+
+    def slow(mid):
+        loaded = orig(mid)
+        time.sleep(0.03)
+        return loaded
+
+    st.read_map = slow
+    path = Path(data_dir) / f"update-{title}"
+    try:
+        st.update_map(map_id, 1, title=title)
+        path.write_text("ok", encoding="utf-8")
+    except st.RevisionConflict:
+        path.write_text("conflict", encoding="utf-8")
+    except Exception as e:  # noqa: BLE001
+        path.write_text(f"err {type(e).__name__}: {e}", encoding="utf-8")
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -351,6 +389,60 @@ class StoreTest(unittest.TestCase):
         md = render.render_status(m)
         self.assertIn('"⚠️ Risk Analyst<br>(•ω•)✧ 作業中<br>「T4、あやしいかも…', md)
         self.assertIn('"📋 TaMap PM<br>(-ω-)zz 待機', md)
+        # Done and error show the passed say (not only the working bubble), same as the GIF / live page.
+        m = store.set_bot_status(mid, "map_architect", "done", "7本つないだ", say="7本、つないだっす")
+        md = render.render_status(m)
+        self.assertIn("🗺️ Map Architect<br>(^ω^) 完了<br>「7本、つないだっす」", md)
+        self.assertNotIn("地図、できたっす！", md)
+        m = store.set_bot_status(mid, "quality_reviewer", "error", "60秒応答なし", say="ここ、直したいね")
+        md = render.render_status(m)
+        self.assertIn("「ここ、直したいね」", md)
+        self.assertNotIn("読みきれなかった…ごめんね", md)
+        m = store.set_bot_status(mid, "risk_analyst", "done", "影響を記録")
+        md = render.render_status(m)
+        self.assertIn("⚠️ Risk Analyst<br>(^ω^) 完了<br>「影響の先、見つけました！」", md)
+
+    def _join(self, procs):
+        for p in procs:
+            p.join(30)
+            if p.is_alive():
+                p.kill()
+                p.join(5)
+                self.fail(f"worker {p.pid} did not finish")
+            self.assertEqual(p.exitcode, 0, f"worker exit {p.exitcode}")
+
+    def test_concurrent_writers_keep_every_update(self):
+        """N processes, each sleeping inside the locked write. Every history note must survive."""
+        mid = self.m["map_id"]
+        data_dir = str(store.DATA_DIR)
+        n = 12
+        ctx = mp.get_context("fork")
+        procs = [ctx.Process(target=_conc_status_worker, args=(data_dir, mid, i)) for i in range(n)]
+        for p in procs:
+            p.start()
+        self._join(procs)
+        got = store.read_map(mid)
+        notes = [h.get("note") for h in got["bot_history"]]
+        self.assertEqual({x for x in notes if x and str(x).startswith("n")}, {f"n{i}" for i in range(n)})
+        # The lock file is the stable sentinel, not a map JSON that os.replace swaps out.
+        self.assertTrue((store.DATA_DIR / ".lock").is_file())
+        self.assertFalse(any(p.name == ".lock" for p in store.DATA_DIR.glob("*.json")))
+
+    def test_concurrent_update_map_allows_one_winner(self):
+        mid = self.m["map_id"]
+        data_dir = str(store.DATA_DIR)
+        titles = [f"t{i}" for i in range(6)]
+        ctx = mp.get_context("fork")
+        procs = [ctx.Process(target=_conc_update_worker, args=(data_dir, mid, title)) for title in titles]
+        for p in procs:
+            p.start()
+        self._join(procs)
+        texts = [(store.DATA_DIR / f"update-{title}").read_text(encoding="utf-8") for title in titles]
+        self.assertEqual(texts.count("ok"), 1, texts)
+        self.assertEqual(texts.count("conflict"), len(titles) - 1, texts)
+        got = store.read_map(mid)
+        self.assertEqual(got["revision"], 2)
+        self.assertIn(got["title"], titles)
 
 
 if __name__ == "__main__":

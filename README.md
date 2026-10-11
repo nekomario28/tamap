@@ -43,7 +43,7 @@ TaMap PM                         Grok Bot のメインBot。create_map / update_
 scripts/mcp_server.sh  →  python -m tamap.mcp_server
   FastMCP。実装上の名前は tamap。Grok Bot に登録したコネクタ名は tamap-v2
   ├── tamap/core.py       検証、遅延の到達先、合流点、ボトルネック、クリティカルパス候補
-  ├── tamap/store.py      data/maps/{map_id}.json（fcntl ロックのあと一時ファイルを os.replace）
+  ├── tamap/store.py      data/maps/{map_id}.json（置き換えない .lock で fcntl 排他ロックし、一時ファイルを os.replace）
   ├── tamap/handoff.py    専門Botの返信から JSON を 1 つ読む（ツール parse_handoff）
   ├── tamap/render.py     チャットに貼る mermaid
   ├── tamap/persona.py    役割・色・口調
@@ -57,7 +57,7 @@ scripts/live_view.sh  →  python -m tamap.live     標準ライブラリの htt
 
 - 入口は PM です。専門Botは PM への返信だけを返します。
 - ID の参照、循環、到達できる後続、ボトルネックは `tamap/core.py` が計算します。所要日数が未入力のときは、到達できる後続だけを返します。
-- 正本は `data/maps/{map_id}.json` です。`expected_revision` が現在と違う更新は `revision_conflict` で拒否します。正規化のあとで tasks / analysis / title が同じ `update_map` は、ファイルを書き換えず revision を維持します。
+- 正本は `data/maps/{map_id}.json` です。読み取りから書き込みまでは、置き換えない `.lock` の排他ロックの中で行います。`expected_revision` が現在と違う更新は `revision_conflict` で拒否します。正規化のあとで tasks / analysis / title が同じ `update_map` は、ファイルを書き換えず revision を維持します。
 - 送ったチャットは書き換えられないので、途中の状態は `set_bot_status` に残し、結果の投稿で流れの GIF を 1 本添付します（[docs/UX_DESIGN.md](docs/UX_DESIGN.md)）。
 
 タスクマップの見方: 完了は緑、進行中は青、未着手は灰、ブロック中は橙、検証エラーは赤、遅延の影響は黄。◆は合流点、▲はボトルネック（破線の太枠）、クリティカルパス候補は太線（`==>`）。存在しない参照と循環は赤の破線です。
@@ -71,7 +71,7 @@ cd /workspace/tamap
 uv sync                          # .venv（mcp, pillow）
 ```
 
-1. **MCP を登録する。** コマンドは `/workspace/tamap/scripts/mcp_server.sh`、トランスポートは stdio。動作確認したコネクタ名は `tamap-v2`（確認時の表示は 10 ツール。コードの `list_tools` は 11。下記）。
+1. **MCP を登録する。** コマンドは `/workspace/tamap/scripts/mcp_server.sh`、トランスポートは stdio。動作確認したコネクタ名は `tamap-v2`。コードの `list_tools` は 11 個で、`parse_handoff` も含みます。
 2. **ライブページ（任意）。** `scripts/live_view.sh` を tmux などで常駐させる。既定は `127.0.0.1:8765`。URL は `get_live_url`。`TAMAP_LIVE_TOKEN` を置くと `?token=` が必要になる。
 3. **Bot を 4 体作る。** 指示文は [docs/GROKBOT_INTEGRATION.md](docs/GROKBOT_INTEGRATION.md) から、それぞれの Bot に入れる。
    - 5.1 TaMap PM（メインBot。ユーザーはここにだけ話す）
@@ -99,9 +99,7 @@ scripts/tamap_cli.sh create_map < /tmp/tamap_args.json
 
 ## MCP ツール
 
-`python -m tamap.mcp_server` の `list_tools` は次の 11 個です。`tests/e2e_mcp.py` がこの集合を確認します。
-
-Grok Bot での動作確認（2026-10-11）では、コネクタ名 `tamap-v2`、**10 ツール**として登録され、呼び出せました。コードの 11 個との差は `parse_handoff` です（PR #3 で追加済み。接続が古い一覧を覚えているときは、登録を読み直すとこのツールも出ます）。
+`python -m tamap.mcp_server` の `list_tools` は次の 11 個です（`parse_handoff` を含む）。`tests/e2e_mcp.py` がこの集合を確認します。`scripts/tamap_cli.sh` の許可リストも同じ一覧です。
 
 | ツール | 内容 | revision |
 | --- | --- | --- |
@@ -110,9 +108,9 @@ Grok Bot での動作確認（2026-10-11）では、コネクタ名 `tamap-v2`�
 | `get_map(map_id)` | 現在の図。structuredContent に tasks と analysis | 不変 |
 | `simulate_delay(map_id, task_id)` | What-if。遅延元を太枠、影響を受けるタスクとエッジを黄で示す。保存しない | 不変 |
 | `list_maps()` | map_id の一覧 | — |
-| `set_bot_status(map_id, bot, status, note?, say?)` | 稼働図を返す。bot は `pm` / `map_architect` / `risk_analyst` / `quality_reviewer`、status は `idle` / `working` / `done` / `error`。専門Botが `working` になると PM は自動で `idle`（「〜の結果待ち」）。`say` は 30 文字までのふきだし。引数が無い接続では `note` の `｜ say:一言` または `{"note","say"}` | 不変 |
-| `parse_handoff(text, role?)` | 専門Botのプレーンテキストから JSON を 1 つ取る（前置き、json フェンス、末尾カンマ、スマートクォートを除く）。role は `map_architect` / `risk_analyst` / `quality_reviewer`。成功時は `structuredContent.data` を使う。この 1 行はユーザーには貼らない | — |
-| `get_status(map_id)` | 稼働図（ユーザー → PM → 3 体 → PM）と直近の履歴 | 不変 |
+| `set_bot_status(map_id, bot, status, note?, say?)` | 稼働図を返す。bot は `pm` / `map_architect` / `risk_analyst` / `quality_reviewer`、status は `idle` / `working` / `done` / `error`。専門Botが `working` になると PM は自動で `idle`（「〜の結果待ち」）。作業中・完了・エラーのノードには `say`（無ければ口ぐせ）。`say` は 30 文字まで。引数が無い接続では `note` の `｜ say:一言` または `{"note","say"}` | 不変 |
+| `parse_handoff(text, bot?, role?)` | MCP ツール。専門Botの返信を毎回これに渡す（自分ではパースしない）。前置き、json フェンス、末尾カンマ、スマートクォートを除いて JSON を 1 つ取る。`bot`（`role` でも同じ）は `map_architect` / `risk_analyst` / `quality_reviewer`。成功時は `structuredContent.data`。この 1 行はユーザーには貼らない | — |
+| `get_status(map_id)` | 稼働図（ユーザー → PM → 3 体 → PM）と直近の履歴。作業中・完了・エラーは `say`（無ければ口ぐせ） | 不変 |
 | `render_flow_gif(map_id)` | 直近 1 周を `out/{map_id}_flow.gif` に書き、パスを返す | 不変 |
 | `get_live_url(map_id)` | ライブページの URL と、サーバーが起動しているか（`running`） | 不変 |
 | `render_team_card()` | チーム紹介の `out/tamap_team.gif`。PM の最初の挨拶に添付する | — |
@@ -162,7 +160,7 @@ revision 3 ・ map_id `…` ・ 更新 13:58:10 JST ・ 検証OK
 ### 動作確認済み（2026-10-11 JST、Grok Bot）
 
 - [x] チャットが mermaid（classDef、linkStyle、破線・太線、`<br>`）を描画し、GIF 添付を再生する
-- [x] stdio MCP を登録して呼び出せた（コネクタ名 `tamap-v2`、10 ツール）。`scripts/tamap_cli.sh` も代替として動いた
+- [x] stdio MCP を登録して呼び出せた（コネクタ名 `tamap-v2`）。`scripts/tamap_cli.sh` も代替として動いた
 - [x] 4 体（TaMap PM、Map Architect、Risk Analyst、Quality Reviewer）が README サンプルで一周を完走した。1 回目 約 80 秒、2 回目 約 61 秒（専門Botは各 約 13〜15 秒）。タイムアウトも revision の競合もなし。`say` は 8/8 渡った。中身が同じ更新は revision を維持した。流れの GIF（約 24〜26 秒）を生成した
 - [x] 閲覧専用ライブページ（`http://127.0.0.1:8765/live/{map_id}`）が、Bot の状態記録に合わせて box のブラウザでリアルタイムに更新された
 
